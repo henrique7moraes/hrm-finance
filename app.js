@@ -2,7 +2,7 @@
 /* HRM Finance — app de controle financeiro pessoal
    Dados: Google Sheets (via Apps Script). Telas: este arquivo. */
 
-const VERSAO_APP = '1.1';
+const VERSAO_APP = '1.2';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -101,18 +101,22 @@ function normalizarBase(d) {
   if (!d) return null;
   return {
     lancamentos: d.lancamentos || [], categorias: d.categorias || [], cofrinhos: d.cofrinhos || [],
-    movimentos: d.movimentos || [], envios: d.envios || [], config: d.config || {}, versao: d.versao || 1
+    movimentos: d.movimentos || [], envios: d.envios || [], receber: d.receber || [], config: d.config || {}, versao: d.versao || 1
   };
 }
 function mesclarFila(base) {
   if (!base) return null;
-  const d = { ...base, lancamentos: base.lancamentos.slice() };
+  const d = { ...base, lancamentos: base.lancamentos.slice(), receber: base.receber.slice() };
   const ids = new Set(d.lancamentos.map(l => String(l.id)));
+  const idsRec = new Set(d.receber.map(r => String(r.id)));
   for (const f of S.fila) {
     if (f.acao !== 'addLancamento') continue;
     if (!ids.has(String(f.dados.id))) d.lancamentos.push({ ...f.dados, _pendente: true });
     for (const sep of f.dados.separacoes || []) {
       if (!ids.has(String(sep.id))) d.lancamentos.push({ ...sep, _pendente: true });
+    }
+    for (const r of f.dados.receber || []) {
+      if (!idsRec.has(String(r.id))) d.receber.push({ ...r, dataHora: f.dados.dataHora, lancamentoId: f.dados.id, _pendente: true });
     }
   }
   return d;
@@ -224,16 +228,33 @@ async function atualizar(mostrar) {
 function enfileirar(item) { S.fila.push(item); salvarFila(); }
 
 /* ---------- cálculos ---------- */
+/* Quanto de cada saída vai voltar (reembolso da igreja ou divisão com outras pessoas) */
+function receberPorLanc(d) {
+  const m = {};
+  for (const r of d.receber) m[String(r.lancamentoId)] = (m[String(r.lancamentoId)] || 0) + num(r.valor);
+  return m;
+}
+/* Gasto de verdade: o que foi pago menos o que vai voltar */
+const gastoLiquido = (l, rec) => r2(num(l.valor) - (l.tipo === 'Entrada' ? 0 : (rec[String(l.id)] || 0)));
+
 function calcular(d, mes) {
   const ini = num(d.config.saldoInicial);
+  const rec = receberPorLanc(d);
   let ent = 0, sai = 0, entMes = 0, saiMes = 0;
   const porCat = {};
   for (const l of d.lancamentos) {
     const v = num(l.valor);
     const noMes = String(l.dataHora).slice(0, 7) === mes;
     if (l.tipo === 'Entrada') { ent += v; if (noMes) entMes += v; }
-    else { sai += v; if (noMes) { saiMes += v; porCat[l.categoria] = (porCat[l.categoria] || 0) + v; } }
+    else {
+      sai += v;
+      const liq = gastoLiquido(l, rec);
+      if (noMes && liq > 0) { saiMes += liq; porCat[l.categoria] = (porCat[l.categoria] || 0) + liq; }
+    }
   }
+  // A receber: sai da carteira quando se paga, volta quando a pessoa ou a igreja devolve
+  let recebido = 0, aReceber = 0;
+  for (const r of d.receber) { if (r.status === 'Recebido') recebido += num(r.valor); else aReceber += num(r.valor); }
   const saldoCofre = {}, rendCofreMes = {};
   let guard = 0, resg = 0, guardMes = 0, resgMes = 0, rendMes = 0;
   for (const m of d.movimentos) {
@@ -248,10 +269,11 @@ function calcular(d, mes) {
   const pendIgreja = d.lancamentos.filter(l => ehSeparacao(l) && !l.envioId);
   const reservado = r2(pendIgreja.reduce((s, l) => s + num(l.valor), 0));
   const dizimoRes = r2(pendIgreja.filter(l => l.parte === 'Dízimo').reduce((s, l) => s + num(l.valor), 0));
-  const carteira = r2(ini + ent - sai - guard + resg);
+  const carteira = r2(ini + ent - sai - guard + resg + recebido);
   const totalCofres = r2(d.cofrinhos.reduce((s, c) => s + (saldoCofre[String(c.id)] || 0), 0));
+  aReceber = r2(aReceber);
   return {
-    carteira, totalCofres, total: r2(carteira + totalCofres),
+    carteira, totalCofres, aReceber, total: r2(carteira + totalCofres + aReceber),
     entMes: r2(entMes), saiMes: r2(saiMes), saldoMes: r2(entMes - saiMes),
     guardadoMes: r2(guardMes - resgMes), rendMes: r2(rendMes),
     porCat, saldoCofre, rendCofreMes, reservado, pendIgreja, dizimoRes, ofertaRes: r2(reservado - dizimoRes)
@@ -333,7 +355,7 @@ function render() {
 
   mostrarMolde(true);
   if (S.view === 'lancar' && !S.form) S.form = novoForm();
-  const views = { painel, historico, lancar, economias, ajustes, dizimos };
+  const views = { painel, historico, lancar, economias, ajustes, dizimos, receber: telaReceber };
   $('#tela').innerHTML = (views[S.view] || painel)();
   $$('#nav [data-view]').forEach(b => b.classList.toggle('ativo', b.dataset.view === S.view));
   atualizarSync();
@@ -436,7 +458,9 @@ function itemLanc(l) {
   const cor = corCat(l.tipo, l.categoria);
   const entrada = l.tipo === 'Entrada';
   const t1 = l.descricao ? esc(l.descricao) : esc(l.categoria);
-  const extras = [l.registro ? 'Nº ' + l.registro : '', l.descricao ? l.categoria : '', l.pagamento, hora(l.dataHora)].filter(Boolean).map(esc).join(' · ');
+  const volta = l.tipo === 'Entrada' ? 0 : (receberPorLanc(S.dados)[String(l.id)] || 0);
+  const extras = [l.registro ? 'Nº ' + l.registro : '', l.descricao ? l.categoria : '', l.pagamento, hora(l.dataHora),
+    volta ? fmt(volta) + ' a receber' : ''].filter(Boolean).map(esc).join(' · ');
   return `
   <button class="item" data-acao="editarLanc" data-id="${esc(l.id)}">
     <span class="ico" style="background:${cor}26;color:${cor}">${esc((l.categoria || '?').charAt(0).toUpperCase())}</span>
@@ -507,6 +531,8 @@ function painel() {
     </div>
   </div>
   <div class="card guardado"><span>Guardado no mês</span><b class="num">${sinal(c.guardadoMes)}</b></div>
+  ${c.aReceber > 0 ? `
+  <button class="card guardado a-receber" data-acao="abrirReceber"><span>A receber</span><b class="num">${fmt(c.aReceber)}</b></button>` : ''}
   ${c.reservado > 0 ? `
   <button class="card guardado igreja" data-acao="abrirDizimos"><span>Reservado para a igreja</span><b class="num">${fmt(c.reservado)}</b></button>` : ''}
 
@@ -531,7 +557,8 @@ function historico() {
   lista.sort((a, b) => String(b.dataHora).localeCompare(String(a.dataHora)));
 
   const ent = r2(lista.filter(l => l.tipo === 'Entrada').reduce((s, l) => s + num(l.valor), 0));
-  const sai = r2(lista.filter(l => l.tipo !== 'Entrada').reduce((s, l) => s + num(l.valor), 0));
+  const rec = receberPorLanc(d);
+  const sai = r2(lista.filter(l => l.tipo !== 'Entrada').reduce((s, l) => s + Math.max(gastoLiquido(l, rec), 0), 0));
 
   const chip = (val, rotulo, cor) =>
     `<button class="chip pequeno ${S.filtro === val ? 'on' : ''}" data-acao="filtro" data-f="${esc(val)}">${cor ? `<span class="bolinha" style="background:${cor}"></span>` : ''}${esc(rotulo)}</button>`;
@@ -561,7 +588,8 @@ function historico() {
 function novoForm() {
   return { id: null, tipo: 'Saída', centavos: 0, categoria: null, catManual: false,
     pagamento: lsGet('hrm_ultimo_pag', 'Pix'), descricao: '', dataHora: null,
-    dizimo: null, oferta: null, temSep: false, sepEnviada: false, ofertaCentavos: 0, ofertaManual: false };
+    dizimo: null, oferta: null, temSep: false, sepEnviada: false, ofertaCentavos: 0, ofertaManual: false,
+    receber: { modo: 'nao', pessoas: [], manual: false, travado: false } };
 }
 
 function lancar() {
@@ -605,6 +633,7 @@ function lancar() {
   <datalist id="sugDesc">${descricoes.map(x => `<option value="${esc(x)}">`).join('')}</datalist>
 
   ${f.tipo === 'Entrada' && S.dados.versao >= 2 ? caixaDizimar(f) : ''}
+  ${f.tipo === 'Saída' && S.dados.versao >= 3 ? caixaReceber(f) : ''}
 
   <label class="rotulo-campo" for="inData">Data e hora</label>
   <input id="inData" type="datetime-local" class="campo" data-campo="dataHora" value="${(f.dataHora || isoLocal()).slice(0, 16)}">
@@ -670,6 +699,91 @@ function atualizarPrevDizimo() {
     const c = Math.round(ofertaDe(f) * 100);
     i.dataset.centavos = c; i.value = c ? fmt(c / 100) : '';
   }
+}
+
+/* ---------- a receber, no formulário de saída ---------- */
+function receberDoForm(l) {
+  const rs = S.dados.receber.filter(r => String(r.lancamentoId) === String(l.id));
+  const base = { modo: 'nao', pessoas: [], manual: true, travado: rs.some(r => r.status === 'Recebido') };
+  if (!rs.length) return { ...base, manual: false };
+  if (rs.length === 1 && rs[0].devedor === 'Igreja') return { ...base, modo: 'igreja' };
+  return { ...base, modo: 'dividir', pessoas: rs.map(r => ({ nome: r.devedor, centavos: Math.round(num(r.valor) * 100) })) };
+}
+
+const devedoresConhecidos = () => [...new Set(S.dados.receber.map(r => r.devedor).filter(n => n && n !== 'Igreja'))];
+
+/* Divide igualmente entre você e as pessoas; a sobra de centavos fica com você */
+function dividirIgual(f) {
+  const rc = f.receber, n = rc.pessoas.length;
+  if (!n || rc.manual) return;
+  const parte = Math.floor(f.centavos / (n + 1));
+  rc.pessoas.forEach(p => { p.centavos = parte; });
+}
+
+function caixaReceber(f) {
+  const rc = f.receber;
+  if (rc.travado) return `
+  <div class="card receber-caixa"><b>Vai receber de volta?</b><div class="muted pequeno">Parte deste valor já foi recebida. Veja em <b>A receber</b>.</div></div>`;
+  const chip = (m, t) => `<button class="chip pequeno ${rc.modo === m ? 'on' : ''}" data-acao="modoReceber" data-modo="${m}">${t}</button>`;
+  const totalP = rc.pessoas.reduce((s, p) => s + (p.centavos || 0), 0);
+  let corpo = '';
+  if (rc.modo === 'igreja') corpo = `
+    <p class="muted pequeno" id="txtIgreja">${f.centavos ? `<b>${fmt(f.centavos / 100)}</b> a receber da igreja. Não conta como seu gasto.` : 'O valor todo volta como reembolso da igreja.'}</p>`;
+  else if (rc.modo === 'dividir') corpo = `
+    <div class="pessoas">
+      ${rc.pessoas.map((p, i) => `
+      <div class="pessoa">
+        <input class="campo" data-rec-nome="${i}" list="sugPessoas" placeholder="Nome" value="${esc(p.nome)}" autocomplete="off">
+        <input class="campo valor" data-rec-valor="${i}" data-dinheiro inputmode="numeric" placeholder="R$ 0,00" autocomplete="off"
+          data-centavos="${p.centavos || 0}" value="${p.centavos ? fmt(p.centavos / 100) : ''}">
+        <button class="x-btn" data-acao="tirarPessoa" data-i="${i}" aria-label="Remover pessoa">${icone.x}</button>
+      </div>`).join('')}
+    </div>
+    <datalist id="sugPessoas">${devedoresConhecidos().map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+    <button class="chip pequeno" data-acao="maisPessoa">+ Pessoa</button>
+    <p class="muted pequeno" id="txtParte">Sua parte: <b>${fmt((f.centavos - totalP) / 100)}</b> · a receber: <b>${fmt(totalP / 100)}</b></p>`;
+  return `
+  <div class="card receber-caixa">
+    <b>Vai receber de volta?</b>
+    <div class="chips" style="margin-top:8px">${chip('nao', 'Não')}${chip('igreja', 'Reembolso da igreja')}${chip('dividir', 'Dividir com pessoas')}</div>
+    ${corpo}
+  </div>`;
+}
+
+function atualizarCaixaReceber() {
+  const el = $('.receber-caixa');
+  if (el && S.form) el.outerHTML = caixaReceber(S.form);
+}
+
+/* Valor mudou: refaz a divisão e os textos sem redesenhar os campos em uso */
+function atualizarTextosReceber() {
+  const f = S.form;
+  if (!f || f.tipo !== 'Saída') return;
+  const rc = f.receber;
+  const ti = $('#txtIgreja');
+  if (ti && f.centavos) ti.innerHTML = `<b>${fmt(f.centavos / 100)}</b> a receber da igreja. Não conta como seu gasto.`;
+  if (rc.modo !== 'dividir') return;
+  dividirIgual(f);
+  rc.pessoas.forEach((p, i) => {
+    const inp = $(`[data-rec-valor="${i}"]`);
+    if (inp && document.activeElement !== inp) { inp.dataset.centavos = p.centavos || 0; inp.value = p.centavos ? fmt(p.centavos / 100) : ''; }
+  });
+  const totalP = rc.pessoas.reduce((s, p) => s + (p.centavos || 0), 0);
+  const tp = $('#txtParte');
+  if (tp) tp.innerHTML = `Sua parte: <b>${fmt((f.centavos - totalP) / 100)}</b> · a receber: <b>${fmt(totalP / 100)}</b>`;
+}
+
+/* Linhas a receber de uma saída, mantendo id e situação das que já existiam */
+function montarReceber(f, antes) {
+  const rc = f.receber, valor = f.centavos / 100;
+  const lista = rc.modo === 'igreja' ? [{ devedor: 'Igreja', valor }]
+    : rc.modo === 'dividir' ? rc.pessoas.map(p => ({ devedor: p.nome.trim(), valor: (p.centavos || 0) / 100 })) : [];
+  const usados = new Set();
+  return lista.map(r => {
+    const velho = (antes || []).find(a => a.devedor === r.devedor && !usados.has(a.id));
+    if (velho) usados.add(velho.id);
+    return { id: velho ? velho.id : uid(), devedor: r.devedor, valor: r2(r.valor), status: velho ? velho.status : 'Pendente' };
+  });
 }
 
 function marcarChips() {
@@ -914,7 +1028,7 @@ function dizimos() {
   </div>` : ''}`;
 }
 
-/* Do que é feito o saldo total. A receber de reembolsos da igreja entra aqui quando existir. */
+/* Do que é feito o saldo total */
 function folhaComposicao() {
   const d = S.dados;
   const c = calcular(d, chaveMes());
@@ -925,6 +1039,7 @@ function folhaComposicao() {
     <div class="card bancos composicao">
       ${linha('Na carteira', c.carteira, 'Disponível para usar')}
       ${linha('Cofrinhos', c.totalCofres, cofres.length ? cofres.map(cf => esc(cf.nome)).join(', ') : 'Nenhum valor guardado')}
+      ${linha('A receber', c.aReceber, 'Reembolsos da igreja e valores divididos')}
       <div class="banco total-linha"><span><b>Saldo total</b></span><b class="num">${fmt(c.total)}</b></div>
     </div>
     ${c.reservado > 0 ? `<p class="muted pequeno">Fora do saldo total: ${fmt(c.reservado)} separado para a igreja (dízimos e ofertas).</p>` : ''}
@@ -951,6 +1066,84 @@ function folhaMenuEnvio(id) {
     <h3>Enviado em ${dataCurta(e.dataHora)}</h3>
     <p class="muted pequeno">Dízimo ${fmt(e.dizimo)} · oferta ${fmt(e.oferta)}</p>
     <button class="menu-op perigo" data-acao="desfazerEnvio" data-id="${esc(id)}">${icone.lixo} Desfazer envio (os valores voltam a ficar reservados)</button>
+    <button class="btn secundario" data-acao="fecharFolha">Fechar</button>`);
+}
+
+/* ---------- A RECEBER ---------- */
+function telaReceber() {
+  const d = S.dados;
+  const c = calcular(d, chaveMes());
+  const lanc = id => d.lancamentos.find(l => String(l.id) === String(id));
+  const abertos = d.receber.filter(r => r.status !== 'Recebido');
+  const porDevedor = {};
+  abertos.forEach(r => (porDevedor[r.devedor] = porDevedor[r.devedor] || []).push(r));
+  const nomes = Object.keys(porDevedor).sort((a, b) => (a === 'Igreja' ? -1 : b === 'Igreja' ? 1 : a.localeCompare(b)));
+  const recebidos = d.receber.filter(r => r.status === 'Recebido')
+    .sort((a, b) => String(b.atualizadoEm).localeCompare(String(a.atualizadoEm))).slice(0, 20);
+  const totIgreja = r2((porDevedor.Igreja || []).reduce((s, r) => s + num(r.valor), 0));
+
+  const item = (r, comQuem) => {
+    const l = lanc(r.lancamentoId);
+    const nome = (comQuem ? (r.devedor === 'Igreja' ? 'Igreja' : r.devedor) + ' · ' : '') + (l ? (l.descricao || l.categoria) : 'Saída');
+    const igreja = r.devedor === 'Igreja';
+    const tag = r.status === 'Recebido' ? `<span class="tag-st ok">recebido ${dataCurta(r.atualizadoEm || r.dataHora)}</span>`
+      : igreja ? `<span class="tag-st ${r.status === 'Nota enviada' ? 'env' : ''}">${r.status === 'Nota enviada' ? 'nota enviada' : 'nota pendente'}</span>` : '';
+    return `<button class="item" data-acao="itemReceber" data-id="${esc(r.id)}">
+      <span class="meio">
+        <div class="t1">${esc(nome)}${r._pendente ? '<span class="tag-pend">enviando</span>' : ''}</div>
+        <div class="t2">${[r.registro ? 'Nº ' + r.registro : '', dataCurta(r.dataHora), l ? 'pago ' + fmt(l.valor) : ''].filter(Boolean).map(esc).join(' · ')} ${tag}</div>
+      </span>
+      <span class="val num">${fmt(r.valor)}</span></button>`;
+  };
+
+  if (d.versao < 3) return `
+  <button class="voltar" data-view="painel">${icone.esq} Painel</button>
+  <h1>A receber</h1>
+  <div class="card dica">${icone.dica}<div><b>Atualize o código da planilha</b><br>Para usar esta parte, cole o novo <b>apps-script/Codigo.gs</b> no Apps Script e publique uma nova versão (veja "Manutenção" no README).</div></div>`;
+
+  return `
+  <button class="voltar" data-view="painel">${icone.esq} Painel</button>
+  <h1>A receber</h1>
+  <section class="heroi">
+    <div class="rotulo">Total a receber</div>
+    <div class="valor-grande num">${fmt(c.aReceber)}</div>
+    <div class="rodape">
+      <div class="mes-saldo"><span>Reembolsos da igreja</span><b class="num">${fmt(totIgreja)}</b></div>
+      <div class="mes-saldo" style="text-align:right"><span>Pessoas</span><b class="num">${fmt(r2(c.aReceber - totIgreja))}</b></div>
+    </div>
+  </section>
+  <p class="muted pequeno" style="margin:10px 2px 0">Já saiu da carteira, não conta como seu gasto e entra no saldo total. Quando receber, o valor volta para a carteira.</p>
+
+  ${nomes.length ? nomes.map(n => {
+    const rs = porDevedor[n].sort((a, b) => String(b.dataHora).localeCompare(String(a.dataHora)));
+    const tot = r2(rs.reduce((s, r) => s + num(r.valor), 0));
+    return `
+  <div class="h2-linha"><h2>${n === 'Igreja' ? 'Reembolsos da igreja' : esc(n)} · ${fmt(tot)}</h2>
+    <button class="link-btn" data-acao="mudarReceber" data-status="Recebido" data-ids="${esc(rs.map(r => r.id).join(','))}">Recebi tudo</button></div>
+  <div class="lista">${rs.map(r => item(r)).join('')}</div>`;
+  }).join('') : `<div class="card vazio" style="margin-top:14px">Nada a receber. Ao registrar uma saída, use "Vai receber de volta?".</div>`}
+
+  ${recebidos.length ? `
+  <h2>Recebidos</h2>
+  <div class="lista">${recebidos.map(r => item(r, true)).join('')}</div>` : ''}`;
+}
+
+function folhaItemReceber(id) {
+  const r = S.dados.receber.find(x => String(x.id) === String(id)); if (!r) return;
+  const l = S.dados.lancamentos.find(x => String(x.id) === String(r.lancamentoId));
+  const igreja = r.devedor === 'Igreja';
+  const op = (st, txt, cls = '') => `<button class="menu-op ${cls}" data-acao="mudarReceber" data-status="${st}" data-ids="${esc(r.id)}">${txt}</button>`;
+  let acoes = '';
+  if (r.status === 'Recebido') acoes = op(igreja ? 'Nota enviada' : 'Pendente', `${icone.esq} Desfazer: ainda não recebi`, 'perigo');
+  else {
+    acoes = op('Recebido', `${icone.sobe} Recebi ${fmt(r.valor)}`);
+    if (igreja) acoes += r.status === 'Nota enviada' ? op('Pendente', `${icone.esq} Voltar para nota pendente`) : op('Nota enviada', `${icone.lista} Enviei a nota para a igreja`);
+  }
+  abrirFolha(`
+    <h3>${igreja ? 'Reembolso da igreja' : esc(r.devedor)} · ${fmt(r.valor)}</h3>
+    <p class="muted pequeno" style="margin:0 0 6px">${l ? esc(l.descricao || l.categoria) + ' · pago ' + fmt(l.valor) + ' em ' + dataCurta(l.dataHora) : ''}${r.registro ? ' · Nº ' + esc(r.registro) : ''}</p>
+    ${acoes}
+    ${l ? `<button class="menu-op" data-acao="editarLanc" data-id="${esc(l.id)}">${icone.lapis} Editar a saída</button>` : ''}
     <button class="btn secundario" data-acao="fecharFolha">Fechar</button>`);
 }
 
@@ -1141,9 +1334,20 @@ const ACOES = {
         origemId: dados.id, parte }));
     if ((dizimo || ofertar) && !f.id) dados.separacoes = montarSeps();
 
+    const comReceber = f.tipo === 'Saída' && S.dados.versao >= 3 && !f.receber.travado;
+    if (comReceber && f.receber.modo === 'dividir') {
+      const ps = f.receber.pessoas;
+      if (!ps.length) return avisar('Adicione quem vai te pagar.', true);
+      if (ps.some(p => !p.nome.trim())) return avisar('Digite o nome de cada pessoa.', true);
+      if (ps.some(p => !p.centavos)) return avisar('Informe quanto cada pessoa vai te pagar.', true);
+      if (ps.reduce((s, p) => s + p.centavos, 0) > f.centavos) return avisar('O valor a receber é maior que o valor pago.', true);
+    }
+    const recAntes = f.id ? S.dados.receber.filter(r => String(r.lancamentoId) === String(f.id)) : [];
+    if (comReceber && f.receber.modo !== 'nao' && !f.id) dados.receber = montarReceber(f);
+
     if (!f.id) {
       enfileirar({ acao: 'addLancamento', dados });
-      avisar(f.tipo === 'Saída' ? `Saída de ${fmt(dados.valor)} registrada`
+      avisar(f.tipo === 'Saída' ? `Saída de ${fmt(dados.valor)} registrada${dados.receber ? ` · ${fmt(dados.receber.reduce((s, r) => s + r.valor, 0))} a receber` : ''}`
         : `Entrada de ${fmt(dados.valor)} registrada${dados.separacoes ? ` · ${fmt(dados.separacoes.reduce((s, x) => s + x.valor, 0))} separado para a igreja` : ''}`);
       S.form = null; S.view = 'painel'; S.mes = dados.dataHora.slice(0, 7);
       render(); window.scrollTo(0, 0);
@@ -1153,12 +1357,14 @@ const ACOES = {
     const pend = S.fila.find(x => x.acao === 'addLancamento' && x.dados.id === f.id);
     if (pend) {
       if (dizimo || ofertar) dados.separacoes = montarSeps(pend.dados.separacoes);
+      if (comReceber && f.receber.modo !== 'nao') dados.receber = montarReceber(f, pend.dados.receber);
       pend.dados = dados; salvarFila();
       avisar('Lançamento atualizado');
       S.form = null; S.view = 'historico'; render(); processarFila();
       return;
     }
     if (comDizimo || f.temSep) { dados.dizimo = dizimo; dados.oferta = ofertar ? r2(ofertaDe(f)) : 0; }
+    if (comReceber || (recAntes.length && !f.receber.travado)) dados.receber = f.tipo === 'Saída' ? montarReceber(f, recAntes) : [];
     if (await executar('editLancamento', dados, 'Lançamento atualizado')) { S.form = null; S.view = 'historico'; render(); }
   },
   async excluirLanc() {
@@ -1172,6 +1378,7 @@ const ACOES = {
   editarLanc(el) {
     let l = S.dados.lancamentos.find(x => String(x.id) === el.dataset.id);
     if (!l) return;
+    fecharFolha();
     if (ehSeparacao(l)) {
       // Dízimo e oferta seguem a entrada: para mudar, edita-se a entrada
       const o = S.dados.lancamentos.find(x => String(x.id) === String(l.origemId));
@@ -1185,7 +1392,8 @@ const ACOES = {
       pagamento: l.pagamento || 'Pix', descricao: l.descricao || '', dataHora: l.dataHora,
       dizimo: ent ? seps.some(x => x.parte === 'Dízimo') : null, oferta: ent ? !!oferta : null,
       temSep: seps.length > 0, sepEnviada: seps.some(x => x.envioId),
-      ofertaCentavos: oferta ? Math.round(num(oferta.valor) * 100) : 0, ofertaManual: !!oferta };
+      ofertaCentavos: oferta ? Math.round(num(oferta.valor) * 100) : 0, ofertaManual: !!oferta,
+      receber: receberDoForm(l) };
     S.view = 'lancar';
     render(); window.scrollTo(0, 0);
   },
@@ -1194,6 +1402,35 @@ const ACOES = {
   alternarSep(el) { const p = el.dataset.parte; S.form[p] = !liga(S.form, p); atualizarCaixaDizimar(); },
   abrirDizimos() { irPara('dizimos'); },
   composicao() { folhaComposicao(); },
+  abrirReceber() { irPara('receber'); },
+  modoReceber(el) {
+    const rc = S.form.receber;
+    rc.modo = el.dataset.modo;
+    if (rc.modo === 'dividir' && !rc.pessoas.length) { rc.pessoas = [{ nome: '', centavos: 0 }]; rc.manual = false; dividirIgual(S.form); }
+    atualizarCaixaReceber();
+    const n = $('[data-rec-nome="0"]'); if (n && !n.value) n.focus();
+  },
+  maisPessoa() {
+    const rc = S.form.receber;
+    rc.pessoas.push({ nome: '', centavos: 0 }); rc.manual = false; dividirIgual(S.form);
+    atualizarCaixaReceber();
+    const n = $(`[data-rec-nome="${rc.pessoas.length - 1}"]`); if (n) n.focus();
+  },
+  tirarPessoa(el) {
+    const rc = S.form.receber;
+    rc.pessoas.splice(+el.dataset.i, 1);
+    if (!rc.pessoas.length) rc.modo = 'nao';
+    rc.manual = false; dividirIgual(S.form);
+    atualizarCaixaReceber();
+  },
+  itemReceber(el) { folhaItemReceber(el.dataset.id); },
+  async mudarReceber(el) {
+    const ids = el.dataset.ids.split(',');
+    const st = el.dataset.status;
+    const msg = st === 'Recebido' ? 'Recebido! O valor voltou para a carteira' : st === 'Nota enviada' ? 'Nota marcada como enviada' : 'Situação atualizada';
+    if (S.fila.length) return avisar('Espere os lançamentos pendentes subirem para a planilha.', true);
+    if (await executar('statusReceber', { ids, status: st, dataHora: isoLocal() }, msg)) { fecharFolha(); render(); }
+  },
   enviarIgreja() { folhaEnviar(); },
   async confirmarEnvio() {
     const v = calcular(S.dados, chaveMes()).reservado;
@@ -1322,12 +1559,17 @@ document.addEventListener('input', e => {
   }
   const campo = t.dataset.campo;
   if (campo && S.form && S.view === 'lancar') {
-    if (campo === 'centavos') { S.form.centavos = +t.dataset.centavos || 0; atualizarPrevDizimo(); }
+    if (campo === 'centavos') { S.form.centavos = +t.dataset.centavos || 0; atualizarPrevDizimo(); atualizarTextosReceber(); }
     else if (campo === 'dataHora') S.form.dataHora = t.value ? t.value + ':00' : null;
     else S.form[campo] = t.value;
   }
   if (t.id === 'inDesc') sugerirCategoria(t.value);
   if (t.id === 'inSaldoNovo') atualizarDif();
+  if (t.dataset.recNome !== undefined && S.form) S.form.receber.pessoas[+t.dataset.recNome].nome = t.value;
+  if (t.dataset.recValor !== undefined && S.form) {
+    S.form.receber.pessoas[+t.dataset.recValor].centavos = +t.dataset.centavos || 0;
+    S.form.receber.manual = true; atualizarTextosReceber();
+  }
   if (t.id === 'inOferta' && S.form) { S.form.ofertaCentavos = +t.dataset.centavos || 0; S.form.ofertaManual = true; atualizarPrevDizimo(); }
 });
 

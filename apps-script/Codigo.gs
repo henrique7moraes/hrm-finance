@@ -6,7 +6,7 @@
  * 3. Implante como "App da Web" (Executar como: Eu | Quem pode acessar: Qualquer pessoa).
  */
 const PIN = '0000';
-const VERSAO = 2;
+const VERSAO = 3;
 const CAT_DIZIMO = 'Dízimos e ofertas';
 
 const ABAS = {
@@ -15,6 +15,7 @@ const ABAS = {
   Cofrinhos:    ['id', 'nome', 'banco', 'meta', 'criadoEm'],
   MovCofrinhos: ['id', 'dataHora', 'cofrinhoId', 'tipo', 'valor', 'obs'],
   EnviosIgreja: ['id', 'dataHora', 'dizimo', 'oferta', 'obs'],
+  AReceber:     ['id', 'dataHora', 'lancamentoId', 'registro', 'devedor', 'valor', 'status', 'atualizadoEm', 'obs'],
   Config:       ['chave', 'valor']
 };
 
@@ -84,6 +85,7 @@ function executar_(acao, d) {
           if (num_(sp.valor) > 0 && !acharLinha_('Lancamentos', sp.id)) anexar_('Lancamentos', separacao_(nova, sp.parte, sp.valor, sp.id));
         });
       }
+      if (d.tipo === 'Saída' && Array.isArray(d.receber)) gravarReceber_(nova, d.receber);
       return;
 
     case 'editLancamento':
@@ -93,12 +95,29 @@ function executar_(acao, d) {
         categoria: d.categoria, pagamento: d.pagamento || '', descricao: d.descricao || ''
       });
       if (d.dizimo !== undefined) ajustarSeparacao_(d, d.tipo === 'Entrada' && !!d.dizimo, d.tipo === 'Entrada' ? num_(d.oferta) : 0);
+      if (d.receber !== undefined) {
+        const ligados = receberDe_(d.id);
+        if (!ligados.some(r => r.status === 'Recebido')) {
+          ligados.forEach(r => remover_('AReceber', r.id));
+          const linha = ler_('Lancamentos').filter(l => String(l.id) === String(d.id))[0];
+          if (d.tipo === 'Saída') gravarReceber_({ ...d, registro: linha && linha.registro }, d.receber || []);
+        }
+      }
       return;
 
     case 'delLancamento':
       remover_('Lancamentos', d.id);
       separacoesDe_(d.id).filter(s => !s.envioId).forEach(s => remover_('Lancamentos', s.id));
+      receberDe_(d.id).forEach(r => remover_('AReceber', r.id));
       return;
+
+    case 'statusReceber': {
+      if (['Pendente', 'Nota enviada', 'Recebido'].indexOf(d.status) < 0) throw new Error('Situação inválida.');
+      (d.ids || []).forEach(id => {
+        if (acharLinha_('AReceber', id)) atualizar_('AReceber', id, { status: d.status, atualizadoEm: d.dataHora || agora_() });
+      });
+      return;
+    }
 
     case 'enviarIgreja': {
       const pendentes = ler_('Lancamentos').filter(l => l.origemId && !l.envioId);
@@ -199,7 +218,8 @@ function preparar_() {
       sh = ss.insertSheet(nome);
       sh.getRange(1, 1, 1, ABAS[nome].length).setValues([ABAS[nome]]).setFontWeight('bold');
       sh.setFrozenRows(1);
-      if (nome === 'Lancamentos' || nome === 'MovCofrinhos' || nome === 'EnviosIgreja') sh.getRange('B:B').setNumberFormat('@');
+      if (['Lancamentos', 'MovCofrinhos', 'EnviosIgreja', 'AReceber'].indexOf(nome) >= 0) sh.getRange('B:B').setNumberFormat('@');
+      if (nome === 'AReceber') sh.getRange('H:H').setNumberFormat('@');
       if (nome === 'Cofrinhos') sh.getRange('E:E').setNumberFormat('@');
       if (nome === 'Categorias') sh.getRange(2, 1, CATEGORIAS_PADRAO.length, 3).setValues(CATEGORIAS_PADRAO);
     } else {
@@ -224,6 +244,7 @@ function carregar_() {
     cofrinhos: ler_('Cofrinhos').map(r => ({ ...r, meta: num_(r.meta) })),
     movimentos: ler_('MovCofrinhos').map(r => ({ ...r, valor: num_(r.valor) })),
     envios: ler_('EnviosIgreja').map(r => ({ ...r, dizimo: num_(r.dizimo), oferta: num_(r.oferta) })),
+    receber: ler_('AReceber').map(r => ({ ...r, valor: num_(r.valor) })),
     config: cfg,
     versao: VERSAO
   };
@@ -332,6 +353,26 @@ function ajustarSeparacao_(entrada, dizimo, oferta) {
     const nova = separacao_(entrada, parte, valores[parte], atual && atual.id);
     if (atual) atualizar_('Lancamentos', atual.id, nova);
     else anexar_('Lancamentos', nova);
+  });
+}
+
+/* ---------- a receber (reembolsos da igreja e divisões com outras pessoas) ---------- */
+
+function receberDe_(lancamentoId) {
+  return ler_('AReceber').filter(r => String(r.lancamentoId) === String(lancamentoId));
+}
+
+/** Grava quem vai devolver parte de uma saída. O que se recebe de volta não conta como gasto. */
+function gravarReceber_(saida, lista) {
+  const total = lista.reduce((s, r) => s + num_(r.valor), 0);
+  if (total > num_(saida.valor) + 0.004) throw new Error('O valor a receber é maior que o valor pago.');
+  lista.forEach(r => {
+    const devedor = String(r.devedor || '').trim();
+    if (!devedor || !(num_(r.valor) > 0) || acharLinha_('AReceber', r.id)) return;
+    anexar_('AReceber', {
+      id: r.id || novoId_(), dataHora: saida.dataHora || agora_(), lancamentoId: saida.id, registro: saida.registro,
+      devedor: devedor, valor: num_(r.valor), status: r.status || 'Pendente', atualizadoEm: '', obs: ''
+    });
   });
 }
 
