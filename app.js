@@ -492,7 +492,7 @@ function painel() {
     <div class="valor-grande num">${fmt(c.carteira)}</div>
     <div class="rodape">
       <div class="mes-saldo"><span>Saldo de ${esc(nomeMes(S.mes, false))}</span><b class="num ${c.saldoMes >= 0 ? 'pos' : 'neg'}">${sinal(c.saldoMes)}</b></div>
-      <div class="total">Saldo total<br><b class="num">${fmt(c.total)}</b></div>
+      <button class="total" data-acao="composicao" aria-label="Ver a composição do saldo total">Saldo total ›<br><b class="num">${fmt(c.total)}</b></button>
     </div>
   </section>
 
@@ -914,6 +914,23 @@ function dizimos() {
   </div>` : ''}`;
 }
 
+/* Do que é feito o saldo total. A receber de reembolsos da igreja entra aqui quando existir. */
+function folhaComposicao() {
+  const d = S.dados;
+  const c = calcular(d, chaveMes());
+  const linha = (nome, v, sub) => `<div class="banco"><span>${nome}${sub ? `<div class="muted pequeno">${sub}</div>` : ''}</span><b class="num">${fmt(v)}</b></div>`;
+  const cofres = d.cofrinhos.filter(cf => Math.abs(c.saldoCofre[String(cf.id)] || 0) > 0.004);
+  abrirFolha(`
+    <h3>Composição do saldo total</h3>
+    <div class="card bancos composicao">
+      ${linha('Na carteira', c.carteira, 'Disponível para usar')}
+      ${linha('Cofrinhos', c.totalCofres, cofres.length ? cofres.map(cf => esc(cf.nome)).join(', ') : 'Nenhum valor guardado')}
+      <div class="banco total-linha"><span><b>Saldo total</b></span><b class="num">${fmt(c.total)}</b></div>
+    </div>
+    ${c.reservado > 0 ? `<p class="muted pequeno">Fora do saldo total: ${fmt(c.reservado)} separado para a igreja (dízimos e ofertas).</p>` : ''}
+    <button class="btn secundario" data-acao="fecharFolha">Fechar</button>`);
+}
+
 function folhaEnviar() {
   const c = calcular(S.dados, chaveMes());
   abrirFolha(`
@@ -1176,6 +1193,7 @@ const ACOES = {
   /* dízimos e ofertas */
   alternarSep(el) { const p = el.dataset.parte; S.form[p] = !liga(S.form, p); atualizarCaixaDizimar(); },
   abrirDizimos() { irPara('dizimos'); },
+  composicao() { folhaComposicao(); },
   enviarIgreja() { folhaEnviar(); },
   async confirmarEnvio() {
     const v = calcular(S.dados, chaveMes()).reservado;
