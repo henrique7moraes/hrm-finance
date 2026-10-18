@@ -561,7 +561,7 @@ function historico() {
 function novoForm() {
   return { id: null, tipo: 'Saída', centavos: 0, categoria: null, catManual: false,
     pagamento: lsGet('hrm_ultimo_pag', 'Pix'), descricao: '', dataHora: null,
-    dizimar: null, temSep: false, sepEnviada: false, ofertaCentavos: 0, ofertaManual: false };
+    dizimo: null, oferta: null, temSep: false, sepEnviada: false, ofertaCentavos: 0, ofertaManual: false };
 }
 
 function lancar() {
@@ -615,37 +615,41 @@ function lancar() {
   <button class="btn secundario" data-acao="cancelarEdicao">Cancelar</button>` : ''}`;
 }
 
-/* Vale para o formulário: marcado se o usuário escolheu, senão a última escolha para esta categoria */
-function vaiDizimar(f) {
-  if (f.dizimar !== null) return f.dizimar;
-  return lsGet('hrm_dizimar', {})[f.categoria] !== false;
+/* Dízimo e oferta ligados? O que o usuário escolheu, senão a última escolha para esta categoria */
+function liga(f, parte) {
+  if (f[parte] !== null) return f[parte];
+  const pref = lsGet('hrm_separar', {})[f.categoria] || {};
+  return pref[parte] !== false;
 }
 
-/* A oferta acompanha o dízimo até o usuário digitar outro valor */
+/* A oferta sugerida acompanha o dízimo até o usuário digitar outro valor */
 const ofertaDe = f => f.ofertaManual ? f.ofertaCentavos / 100 : dizimoDe(f.centavos / 100);
-
-function textoDizimo(f) {
-  if (!f.centavos) return 'Dízimo de 10% e oferta';
-  const dz = dizimoDe(f.centavos / 100);
-  return `Dízimo ${fmt(dz)} + oferta ${fmt(ofertaDe(f))} = <b>${fmt(dz + ofertaDe(f))}</b>`;
-}
 
 function caixaDizimar(f) {
   if (f.sepEnviada) return `
-  <div class="card dizimar"><div class="linha"><div><b>Dizimar</b><div class="muted pequeno">O dízimo e a oferta desta entrada já foram enviados à igreja.</div></div></div></div>`;
-  const on = vaiDizimar(f);
-  const of = Math.round(ofertaDe(f) * 100);
+  <div class="card dizimar"><div class="linha"><div><b>Dízimo e oferta</b><div class="muted pequeno">Os desta entrada já foram enviados à igreja.</div></div></div></div>`;
+  const dz = liga(f, 'dizimo'), of = liga(f, 'oferta');
+  const ofC = Math.round(ofertaDe(f) * 100);
   return `
   <div class="card dizimar">
     <div class="linha">
-      <div><b>Dizimar</b><div class="muted pequeno" id="prevDizimo">${on ? textoDizimo(f) : 'Esta entrada não será dizimada'}</div></div>
-      <button class="interruptor ${on ? 'on' : ''}" data-acao="dizimar" aria-label="Dizimar esta entrada"></button>
+      <div><b>Dízimo</b><div class="muted pequeno">10% da entrada</div></div>
+      <button class="interruptor ${dz ? 'on' : ''}" data-acao="alternarSep" data-parte="dizimo" aria-label="Dízimo"></button>
     </div>
-    ${on ? `
-    <div class="linha oferta">
-      <label for="inOferta">Oferta</label>
+    ${dz ? `
+    <div class="linha valor-sep">
+      <span>Valor do dízimo</span>
+      <b class="num" id="valDizimo">${fmt(dizimoDe(f.centavos / 100))}</b>
+    </div>` : ''}
+    <div class="linha separa">
+      <div><b>Oferta</b><div class="muted pequeno">Sugestão: igual ao dízimo</div></div>
+      <button class="interruptor ${of ? 'on' : ''}" data-acao="alternarSep" data-parte="oferta" aria-label="Oferta"></button>
+    </div>
+    ${of ? `
+    <div class="linha valor-sep">
+      <label for="inOferta">Valor da oferta</label>
       <input id="inOferta" class="campo" data-dinheiro inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"
-        data-centavos="${of}" value="${of ? fmt(of / 100) : ''}">
+        data-centavos="${ofC}" value="${ofC ? fmt(ofC / 100) : ''}">
     </div>` : ''}
   </div>`;
 }
@@ -655,11 +659,12 @@ function atualizarCaixaDizimar() {
   if (el && S.form) el.outerHTML = caixaDizimar(S.form);
 }
 
+/* Valor digitado mudou: atualiza o dízimo e a oferta sugerida */
 function atualizarPrevDizimo() {
   const f = S.form;
-  const el = $('#prevDizimo');
-  if (!el || !f || !vaiDizimar(f)) return;
-  el.innerHTML = textoDizimo(f);
+  if (!f) return;
+  const vd = $('#valDizimo');
+  if (vd) vd.textContent = fmt(dizimoDe(f.centavos / 100));
   const i = $('#inOferta');
   if (i && !f.ofertaManual && document.activeElement !== i) {
     const c = Math.round(ofertaDe(f) * 100);
@@ -897,7 +902,7 @@ function dizimos() {
         <div class="t2">Dízimo ${fmt(g.dizimo)} + oferta ${fmt(g.oferta)}</div>
       </span>
       <span class="val num">${fmt(g.dizimo + g.oferta)}</span></button>`;
-  }).join('') : '<div class="card vazio">Nada separado agora. Ao registrar uma entrada, ligue "Dizimar".</div>'}</div>
+  }).join('') : '<div class="card vazio">Nada separado agora. Ao registrar uma entrada, ligue o dízimo ou a oferta.</div>'}</div>
 
   ${envios.length ? `
   <h2>Enviados à igreja</h2>
@@ -1109,15 +1114,15 @@ const ACOES = {
     };
     if (f.tipo === 'Saída') lsSet('hrm_ultimo_pag', f.pagamento);
     const comDizimo = f.tipo === 'Entrada' && S.dados.versao >= 2 && !f.sepEnviada;
-    const dizimar = comDizimo && vaiDizimar(f);
-    if (comDizimo) { const pref = lsGet('hrm_dizimar', {}); pref[f.categoria] = dizimar; lsSet('hrm_dizimar', pref); }
+    const dizimo = comDizimo && liga(f, 'dizimo'), ofertar = comDizimo && liga(f, 'oferta');
+    if (comDizimo) { const pref = lsGet('hrm_separar', {}); pref[f.categoria] = { dizimo, oferta: ofertar }; lsSet('hrm_separar', pref); }
     // Dízimo e oferta montados aqui para o lançamento funcionar mesmo sem internet
-    const montarSeps = antes => [['Dízimo', dizimoDe(dados.valor)], ['Oferta', r2(ofertaDe(f))]]
+    const montarSeps = antes => [['Dízimo', dizimo ? dizimoDe(dados.valor) : 0], ['Oferta', ofertar ? r2(ofertaDe(f)) : 0]]
       .filter(([, v]) => v > 0)
       .map(([parte, v]) => ({ id: ((antes || []).find(x => x.parte === parte) || {}).id || uid(), dataHora: dados.dataHora, tipo: 'Saída',
         valor: v, categoria: CAT_DIZIMO, pagamento: 'Pix', descricao: parte + ' · ' + (dados.descricao || dados.categoria),
         origemId: dados.id, parte }));
-    if (dizimar && !f.id) dados.separacoes = montarSeps();
+    if ((dizimo || ofertar) && !f.id) dados.separacoes = montarSeps();
 
     if (!f.id) {
       enfileirar({ acao: 'addLancamento', dados });
@@ -1130,13 +1135,13 @@ const ACOES = {
     }
     const pend = S.fila.find(x => x.acao === 'addLancamento' && x.dados.id === f.id);
     if (pend) {
-      if (dizimar) dados.separacoes = montarSeps(pend.dados.separacoes);
+      if (dizimo || ofertar) dados.separacoes = montarSeps(pend.dados.separacoes);
       pend.dados = dados; salvarFila();
       avisar('Lançamento atualizado');
       S.form = null; S.view = 'historico'; render(); processarFila();
       return;
     }
-    if (comDizimo || f.temSep) { dados.dizimar = dizimar; dados.oferta = r2(ofertaDe(f)); }
+    if (comDizimo || f.temSep) { dados.dizimo = dizimo; dados.oferta = ofertar ? r2(ofertaDe(f)) : 0; }
     if (await executar('editLancamento', dados, 'Lançamento atualizado')) { S.form = null; S.view = 'historico'; render(); }
   },
   async excluirLanc() {
@@ -1158,17 +1163,18 @@ const ACOES = {
       l = o;
     }
     const seps = S.dados.lancamentos.filter(x => ehSeparacao(x) && String(x.origemId) === String(l.id));
-    const oferta = seps.find(x => x.parte === 'Oferta');
+    const oferta = seps.find(x => x.parte === 'Oferta'), ent = l.tipo === 'Entrada';
     S.form = { id: l.id, tipo: l.tipo, centavos: Math.round(num(l.valor) * 100), categoria: l.categoria, catManual: true,
       pagamento: l.pagamento || 'Pix', descricao: l.descricao || '', dataHora: l.dataHora,
-      dizimar: l.tipo === 'Entrada' ? seps.length > 0 : null, temSep: seps.length > 0, sepEnviada: seps.some(x => x.envioId),
-      ofertaCentavos: oferta ? Math.round(num(oferta.valor) * 100) : 0, ofertaManual: seps.length > 0 };
+      dizimo: ent ? seps.some(x => x.parte === 'Dízimo') : null, oferta: ent ? !!oferta : null,
+      temSep: seps.length > 0, sepEnviada: seps.some(x => x.envioId),
+      ofertaCentavos: oferta ? Math.round(num(oferta.valor) * 100) : 0, ofertaManual: !!oferta };
     S.view = 'lancar';
     render(); window.scrollTo(0, 0);
   },
 
   /* dízimos e ofertas */
-  dizimar() { S.form.dizimar = !vaiDizimar(S.form); render(); },
+  alternarSep(el) { const p = el.dataset.parte; S.form[p] = !liga(S.form, p); atualizarCaixaDizimar(); },
   abrirDizimos() { irPara('dizimos'); },
   enviarIgreja() { folhaEnviar(); },
   async confirmarEnvio() {

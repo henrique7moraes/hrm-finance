@@ -81,7 +81,7 @@ App pessoal de controle financeiro do Henrique: registro imediato de entradas e 
 | Tirar dinheiro do cofrinho | **Economias** → cofrinho → **Resgatar** (volta para a carteira) |
 | Registrar rendimento | **Economias** → cofrinho → **Atualizar saldo** (digite o valor que o banco mostra) |
 | Criar ou remover categorias | **Ajustes** |
-| Separar dízimo e oferta de uma entrada | Ao registrar a entrada, deixe **Dizimar** ligado |
+| Separar dízimo e oferta de uma entrada | Ao registrar a entrada, ligue **Dízimo** e/ou **Oferta** |
 | Ver o que está reservado para a igreja | **Painel → Reservado para a igreja** (ou **Economias**) |
 | Registrar o envio do mês à igreja | **Dízimos e ofertas → Enviei para a igreja** |
 
@@ -89,7 +89,7 @@ App pessoal de controle financeiro do Henrique: registro imediato de entradas e 
 - Guardar e resgatar **não** contam como saída nem entrada: só mudam o dinheiro de lugar.
 - O rendimento dos cofrinhos fica no cofrinho e só aumenta o **Saldo total**. Quando um rendimento cair direto na conta, registre como entrada na categoria **Rendimento**.
 - Sem internet? Registre normalmente: o lançamento fica marcado como "enviando" e sobe sozinho quando a conexão voltar. A bolinha no topo mostra o estado: verde (em dia), amarela (enviando), vermelha (sem conexão).
-- Dízimo é 10% da entrada, arredondado para cima no centavo, e a oferta começa igual ao dízimo, mas você pode mudar. O valor sai da carteira na hora (conta como gasto em **Dízimos e ofertas**) e fica reservado, fora do saldo total, até você marcar o envio à igreja. Para mudar a oferta, edite a entrada. O dízimo e a oferta usam o mesmo número de registro (Nº) da entrada de onde vieram.
+- Dízimo é 10% da entrada, arredondado para cima no centavo, e a oferta (opcional) vem sugerida igual ao dízimo, mas você pode mudar. O valor sai da carteira na hora (conta como gasto em **Dízimos e ofertas**) e fica reservado, fora do saldo total, até você marcar o envio à igreja. Para mudar a oferta, edite a entrada. O dízimo e a oferta usam o mesmo número de registro (Nº) da entrada de onde vieram.
 - Ao descrever um gasto ("mercado", "uber"…), o app sugere a categoria e aprende com o que você já registrou.
 
 ---

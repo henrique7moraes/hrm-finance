@@ -290,9 +290,10 @@ input[type="datetime-local"].campo, input[type="date"].campo { color-scheme: dar
 .linha-btn > b { color: var(--azul-claro); white-space: nowrap; }
 .dizimar { margin-top: 16px; padding: 12px 14px; }
 .dizimar .linha { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.dizimar .oferta { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--linha); }
-.dizimar .oferta label { font-size: 14px; color: var(--suave); font-weight: 600; }
-.dizimar .oferta .campo { max-width: 150px; text-align: right; margin: 0; }
+.dizimar .separa { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--linha); }
+.dizimar .valor-sep { margin-top: 10px; min-height: 44px; font-size: 14px; color: var(--suave); font-weight: 600; }
+.dizimar .valor-sep b { font-size: 17px; color: var(--texto); padding-right: 14px; }
+.dizimar .valor-sep .campo { max-width: 150px; text-align: right; margin: 0; }
 .dizimar .muted b { color: var(--texto); }
 .voltar { display: inline-flex; align-items: center; gap: 4px; color: var(--suave); font-size: 14px; font-weight: 600; padding: 4px 0; }
 .voltar svg { width: 18px; height: 18px; }

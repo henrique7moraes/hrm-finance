@@ -92,7 +92,7 @@ function executar_(acao, d) {
         dataHora: d.dataHora, tipo: d.tipo, valor: num_(d.valor),
         categoria: d.categoria, pagamento: d.pagamento || '', descricao: d.descricao || ''
       });
-      if (d.dizimar !== undefined) ajustarSeparacao_(d, d.tipo === 'Entrada' && !!d.dizimar, d.oferta);
+      if (d.dizimo !== undefined) ajustarSeparacao_(d, d.tipo === 'Entrada' && !!d.dizimo, d.tipo === 'Entrada' ? num_(d.oferta) : 0);
       return;
 
     case 'delLancamento':
@@ -301,7 +301,7 @@ function numerarRegistros_(sh) {
 
 /* ---------- dízimos e ofertas ---------- */
 
-/** Dízimo = 10% arredondado para cima no centavo. A oferta começa igual ao dízimo e pode ser mudada. */
+/** Dízimo = 10% arredondado para cima no centavo. A oferta (opcional) é sugerida igual ao dízimo e pode ser mudada. */
 function dizimoDe_(valor) {
   return Math.ceil(Math.round(num_(valor) * 100) / 10) / 100;
 }
@@ -320,12 +320,12 @@ function separacoesDe_(origemId) {
 }
 
 /** Depois de editar uma entrada: cria, atualiza ou remove o dízimo e a oferta dela (o que já foi enviado não muda). */
-function ajustarSeparacao_(entrada, dizimar, oferta) {
+function ajustarSeparacao_(entrada, dizimo, oferta) {
   const seps = separacoesDe_(entrada.id);
   if (seps.some(sp => sp.envioId)) return;
   const linha = ler_('Lancamentos').filter(l => String(l.id) === String(entrada.id))[0];
   entrada = { ...entrada, registro: linha && linha.registro };
-  const valores = { 'Dízimo': dizimar ? dizimoDe_(entrada.valor) : 0, 'Oferta': dizimar ? num_(oferta === undefined ? dizimoDe_(entrada.valor) : oferta) : 0 };
+  const valores = { 'Dízimo': dizimo ? dizimoDe_(entrada.valor) : 0, 'Oferta': num_(oferta) };
   Object.keys(valores).forEach(parte => {
     const atual = seps.filter(sp => sp.parte === parte)[0];
     if (valores[parte] <= 0) { if (atual) remover_('Lancamentos', atual.id); return; }
