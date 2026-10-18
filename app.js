@@ -2,7 +2,7 @@
 /* HRM Finance — app de controle financeiro pessoal
    Dados: Google Sheets (via Apps Script). Telas: este arquivo. */
 
-const VERSAO_APP = '1.0';
+const VERSAO_APP = '1.2';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -15,6 +15,10 @@ const fmtCurto = v => Math.abs(v) >= 10000 ? BRL_CURTO.format(v) : fmt(v);
 const sinal = v => (v > 0.004 ? '+' : v < -0.004 ? '−' : '') + fmt(Math.abs(v));
 
 const PAGAMENTOS = ['Pix', 'Débito', 'Dinheiro'];
+const CAT_DIZIMO = 'Dízimos e ofertas';
+/* Dízimo = 10% arredondado para cima no centavo; a oferta começa igual ao dízimo e pode ser mudada */
+const dizimoDe = v => Math.ceil(Math.round(num(v) * 100) / 10) / 100;
+const ehSeparacao = l => !!l.origemId;
 const CORES = ['#F2994A', '#56CCF2', '#F2C94C', '#BB6BD9', '#27AE60', '#6FCF97', '#EB5757', '#2D9CDB',
   '#FF8FB1', '#A3E635', '#FFB86B', '#9B8CFF', '#4DD4C6', '#C0C7D6'];
 
@@ -97,15 +101,23 @@ function normalizarBase(d) {
   if (!d) return null;
   return {
     lancamentos: d.lancamentos || [], categorias: d.categorias || [], cofrinhos: d.cofrinhos || [],
-    movimentos: d.movimentos || [], config: d.config || {}
+    movimentos: d.movimentos || [], envios: d.envios || [], receber: d.receber || [], config: d.config || {}, versao: d.versao || 1
   };
 }
 function mesclarFila(base) {
   if (!base) return null;
-  const d = { ...base, lancamentos: base.lancamentos.slice() };
+  const d = { ...base, lancamentos: base.lancamentos.slice(), receber: base.receber.slice() };
   const ids = new Set(d.lancamentos.map(l => String(l.id)));
+  const idsRec = new Set(d.receber.map(r => String(r.id)));
   for (const f of S.fila) {
-    if (f.acao === 'addLancamento' && !ids.has(String(f.dados.id))) d.lancamentos.push({ ...f.dados, _pendente: true });
+    if (f.acao !== 'addLancamento') continue;
+    if (!ids.has(String(f.dados.id))) d.lancamentos.push({ ...f.dados, _pendente: true });
+    for (const sep of f.dados.separacoes || []) {
+      if (!ids.has(String(sep.id))) d.lancamentos.push({ ...sep, _pendente: true });
+    }
+    for (const r of f.dados.receber || []) {
+      if (!idsRec.has(String(r.id))) d.receber.push({ ...r, dataHora: f.dados.dataHora, lancamentoId: f.dados.id, _pendente: true });
+    }
   }
   return d;
 }
@@ -216,16 +228,33 @@ async function atualizar(mostrar) {
 function enfileirar(item) { S.fila.push(item); salvarFila(); }
 
 /* ---------- cálculos ---------- */
+/* Quanto de cada saída vai voltar (reembolso da igreja ou divisão com outras pessoas) */
+function receberPorLanc(d) {
+  const m = {};
+  for (const r of d.receber) m[String(r.lancamentoId)] = (m[String(r.lancamentoId)] || 0) + num(r.valor);
+  return m;
+}
+/* Gasto de verdade: o que foi pago menos o que vai voltar */
+const gastoLiquido = (l, rec) => r2(num(l.valor) - (l.tipo === 'Entrada' ? 0 : (rec[String(l.id)] || 0)));
+
 function calcular(d, mes) {
   const ini = num(d.config.saldoInicial);
+  const rec = receberPorLanc(d);
   let ent = 0, sai = 0, entMes = 0, saiMes = 0;
   const porCat = {};
   for (const l of d.lancamentos) {
     const v = num(l.valor);
     const noMes = String(l.dataHora).slice(0, 7) === mes;
     if (l.tipo === 'Entrada') { ent += v; if (noMes) entMes += v; }
-    else { sai += v; if (noMes) { saiMes += v; porCat[l.categoria] = (porCat[l.categoria] || 0) + v; } }
+    else {
+      sai += v;
+      const liq = gastoLiquido(l, rec);
+      if (noMes && liq > 0) { saiMes += liq; porCat[l.categoria] = (porCat[l.categoria] || 0) + liq; }
+    }
   }
+  // A receber: sai da carteira quando se paga, volta quando a pessoa ou a igreja devolve
+  let recebido = 0, aReceber = 0;
+  for (const r of d.receber) { if (r.status === 'Recebido') recebido += num(r.valor); else aReceber += num(r.valor); }
   const saldoCofre = {}, rendCofreMes = {};
   let guard = 0, resg = 0, guardMes = 0, resgMes = 0, rendMes = 0;
   for (const m of d.movimentos) {
@@ -236,13 +265,18 @@ function calcular(d, mes) {
     else if (m.tipo === 'Resgatar') { resg += v; if (noMes) resgMes += v; }
     else if (m.tipo === 'Rendimento' && noMes) { rendMes += v; rendCofreMes[id] = (rendCofreMes[id] || 0) + v; }
   }
-  const carteira = r2(ini + ent - sai - guard + resg);
+  // Dízimos e ofertas separados que ainda não foram enviados à igreja (já contaram como saída)
+  const pendIgreja = d.lancamentos.filter(l => ehSeparacao(l) && !l.envioId);
+  const reservado = r2(pendIgreja.reduce((s, l) => s + num(l.valor), 0));
+  const dizimoRes = r2(pendIgreja.filter(l => l.parte === 'Dízimo').reduce((s, l) => s + num(l.valor), 0));
+  const carteira = r2(ini + ent - sai - guard + resg + recebido);
   const totalCofres = r2(d.cofrinhos.reduce((s, c) => s + (saldoCofre[String(c.id)] || 0), 0));
+  aReceber = r2(aReceber);
   return {
-    carteira, totalCofres, total: r2(carteira + totalCofres),
+    carteira, totalCofres, aReceber, total: r2(carteira + totalCofres + aReceber),
     entMes: r2(entMes), saiMes: r2(saiMes), saldoMes: r2(entMes - saiMes),
     guardadoMes: r2(guardMes - resgMes), rendMes: r2(rendMes),
-    porCat, saldoCofre, rendCofreMes
+    porCat, saldoCofre, rendCofreMes, reservado, pendIgreja, dizimoRes, ofertaRes: r2(reservado - dizimoRes)
   };
 }
 const saldoDoCofre = id => r2(calcular(S.dados, chaveMes()).saldoCofre[String(id)] || 0);
@@ -321,7 +355,7 @@ function render() {
 
   mostrarMolde(true);
   if (S.view === 'lancar' && !S.form) S.form = novoForm();
-  const views = { painel, historico, lancar, economias, ajustes };
+  const views = { painel, historico, lancar, economias, ajustes, dizimos, receber: telaReceber };
   $('#tela').innerHTML = (views[S.view] || painel)();
   $$('#nav [data-view]').forEach(b => b.classList.toggle('ativo', b.dataset.view === S.view));
   atualizarSync();
@@ -424,7 +458,9 @@ function itemLanc(l) {
   const cor = corCat(l.tipo, l.categoria);
   const entrada = l.tipo === 'Entrada';
   const t1 = l.descricao ? esc(l.descricao) : esc(l.categoria);
-  const extras = [l.descricao ? l.categoria : '', l.pagamento, hora(l.dataHora)].filter(Boolean).map(esc).join(' · ');
+  const volta = l.tipo === 'Entrada' ? 0 : (receberPorLanc(S.dados)[String(l.id)] || 0);
+  const extras = [l.registro ? 'Nº ' + l.registro : '', l.descricao ? l.categoria : '', l.pagamento, hora(l.dataHora),
+    volta ? fmt(volta) + ' a receber' : ''].filter(Boolean).map(esc).join(' · ');
   return `
   <button class="item" data-acao="editarLanc" data-id="${esc(l.id)}">
     <span class="ico" style="background:${cor}26;color:${cor}">${esc((l.categoria || '?').charAt(0).toUpperCase())}</span>
@@ -480,7 +516,7 @@ function painel() {
     <div class="valor-grande num">${fmt(c.carteira)}</div>
     <div class="rodape">
       <div class="mes-saldo"><span>Saldo de ${esc(nomeMes(S.mes, false))}</span><b class="num ${c.saldoMes >= 0 ? 'pos' : 'neg'}">${sinal(c.saldoMes)}</b></div>
-      <div class="total">Saldo total<br><b class="num">${fmt(c.total)}</b></div>
+      <button class="total" data-acao="composicao" aria-label="Ver a composição do saldo total">Saldo total ›<br><b class="num">${fmt(c.total)}</b></button>
     </div>
   </section>
 
@@ -495,6 +531,10 @@ function painel() {
     </div>
   </div>
   <div class="card guardado"><span>Guardado no mês</span><b class="num">${sinal(c.guardadoMes)}</b></div>
+  ${c.aReceber > 0 ? `
+  <button class="card guardado a-receber" data-acao="abrirReceber"><span>A receber</span><b class="num">${fmt(c.aReceber)}</b></button>` : ''}
+  ${c.reservado > 0 ? `
+  <button class="card guardado igreja" data-acao="abrirDizimos"><span>Reservado para a igreja</span><b class="num">${fmt(c.reservado)}</b></button>` : ''}
 
   ${primeiraVez ? `
   <div class="card dica">${icone.dica}<div><b>Primeiros passos</b><br>Toque no <b>+</b> para registrar um gasto ou uma entrada. Seus cofrinhos você cria na aba <b>Economias</b>.</div></div>` : ''}
@@ -517,7 +557,8 @@ function historico() {
   lista.sort((a, b) => String(b.dataHora).localeCompare(String(a.dataHora)));
 
   const ent = r2(lista.filter(l => l.tipo === 'Entrada').reduce((s, l) => s + num(l.valor), 0));
-  const sai = r2(lista.filter(l => l.tipo !== 'Entrada').reduce((s, l) => s + num(l.valor), 0));
+  const rec = receberPorLanc(d);
+  const sai = r2(lista.filter(l => l.tipo !== 'Entrada').reduce((s, l) => s + Math.max(gastoLiquido(l, rec), 0), 0));
 
   const chip = (val, rotulo, cor) =>
     `<button class="chip pequeno ${S.filtro === val ? 'on' : ''}" data-acao="filtro" data-f="${esc(val)}">${cor ? `<span class="bolinha" style="background:${cor}"></span>` : ''}${esc(rotulo)}</button>`;
@@ -546,7 +587,9 @@ function historico() {
 /* ---------- LANÇAR ---------- */
 function novoForm() {
   return { id: null, tipo: 'Saída', centavos: 0, categoria: null, catManual: false,
-    pagamento: lsGet('hrm_ultimo_pag', 'Pix'), descricao: '', dataHora: null };
+    pagamento: lsGet('hrm_ultimo_pag', 'Pix'), descricao: '', dataHora: null,
+    dizimo: null, oferta: null, temSep: false, sepEnviada: false, ofertaCentavos: 0, ofertaManual: false,
+    receber: { modo: 'nao', pessoas: [], manual: false, travado: false } };
 }
 
 function lancar() {
@@ -589,6 +632,9 @@ function lancar() {
     placeholder="${f.tipo === 'Saída' ? 'Ex.: mercado, almoço, uber' : 'Ex.: salário de outubro'}" value="${esc(f.descricao)}">
   <datalist id="sugDesc">${descricoes.map(x => `<option value="${esc(x)}">`).join('')}</datalist>
 
+  ${f.tipo === 'Entrada' && S.dados.versao >= 2 ? caixaDizimar(f) : ''}
+  ${f.tipo === 'Saída' && S.dados.versao >= 3 ? caixaReceber(f) : ''}
+
   <label class="rotulo-campo" for="inData">Data e hora</label>
   <input id="inData" type="datetime-local" class="campo" data-campo="dataHora" value="${(f.dataHora || isoLocal()).slice(0, 16)}">
 
@@ -596,6 +642,152 @@ function lancar() {
   ${edit ? `
   <button class="btn perigo" data-acao="excluirLanc">Excluir lançamento</button>
   <button class="btn secundario" data-acao="cancelarEdicao">Cancelar</button>` : ''}`;
+}
+
+/* Dízimo e oferta ligados? O que o usuário escolheu, senão a última escolha para esta categoria */
+function liga(f, parte) {
+  if (f[parte] !== null) return f[parte];
+  const pref = lsGet('hrm_separar', {})[f.categoria] || {};
+  return pref[parte] !== false;
+}
+
+/* A oferta sugerida acompanha o dízimo até o usuário digitar outro valor */
+const ofertaDe = f => f.ofertaManual ? f.ofertaCentavos / 100 : dizimoDe(f.centavos / 100);
+
+function caixaDizimar(f) {
+  if (f.sepEnviada) return `
+  <div class="card dizimar"><div class="linha"><div><b>Dízimo e oferta</b><div class="muted pequeno">Os desta entrada já foram enviados à igreja.</div></div></div></div>`;
+  const dz = liga(f, 'dizimo'), of = liga(f, 'oferta');
+  const ofC = Math.round(ofertaDe(f) * 100);
+  return `
+  <div class="card dizimar">
+    <div class="linha">
+      <div><b>Dízimo</b><div class="muted pequeno">10% da entrada</div></div>
+      <button class="interruptor ${dz ? 'on' : ''}" data-acao="alternarSep" data-parte="dizimo" aria-label="Dízimo"></button>
+    </div>
+    ${dz ? `
+    <div class="linha valor-sep">
+      <span>Valor do dízimo</span>
+      <b class="num" id="valDizimo">${fmt(dizimoDe(f.centavos / 100))}</b>
+    </div>` : ''}
+    <div class="linha separa">
+      <div><b>Oferta</b><div class="muted pequeno">Sugestão: igual ao dízimo</div></div>
+      <button class="interruptor ${of ? 'on' : ''}" data-acao="alternarSep" data-parte="oferta" aria-label="Oferta"></button>
+    </div>
+    ${of ? `
+    <div class="linha valor-sep">
+      <label for="inOferta">Valor da oferta</label>
+      <input id="inOferta" class="campo" data-dinheiro inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"
+        data-centavos="${ofC}" value="${ofC ? fmt(ofC / 100) : ''}">
+    </div>` : ''}
+  </div>`;
+}
+
+function atualizarCaixaDizimar() {
+  const el = $('.dizimar');
+  if (el && S.form) el.outerHTML = caixaDizimar(S.form);
+}
+
+/* Valor digitado mudou: atualiza o dízimo e a oferta sugerida */
+function atualizarPrevDizimo() {
+  const f = S.form;
+  if (!f) return;
+  const vd = $('#valDizimo');
+  if (vd) vd.textContent = fmt(dizimoDe(f.centavos / 100));
+  const i = $('#inOferta');
+  if (i && !f.ofertaManual && document.activeElement !== i) {
+    const c = Math.round(ofertaDe(f) * 100);
+    i.dataset.centavos = c; i.value = c ? fmt(c / 100) : '';
+  }
+}
+
+/* ---------- a receber, no formulário de saída ---------- */
+function receberDoForm(l) {
+  const rs = S.dados.receber.filter(r => String(r.lancamentoId) === String(l.id));
+  const base = { modo: 'nao', pessoas: [], manual: true, travado: rs.some(r => r.status === 'Recebido') };
+  if (!rs.length) return { ...base, manual: false };
+  if (rs.length === 1 && rs[0].devedor === 'Igreja') return { ...base, modo: 'igreja' };
+  return { ...base, modo: 'dividir', pessoas: rs.map(r => ({ nome: r.devedor, centavos: Math.round(num(r.valor) * 100) })) };
+}
+
+const devedoresConhecidos = () => [...new Set(S.dados.receber.map(r => r.devedor).filter(n => n && n !== 'Igreja'))];
+
+/* Divide igualmente entre você e as pessoas; a sobra de centavos fica com você */
+function dividirIgual(f) {
+  const rc = f.receber, n = rc.pessoas.length;
+  if (!n || rc.manual) return;
+  const parte = Math.floor(f.centavos / (n + 1));
+  rc.pessoas.forEach(p => { p.centavos = parte; });
+}
+
+function caixaReceber(f) {
+  const rc = f.receber;
+  if (rc.travado) return `
+  <div class="card receber-caixa"><b>Receber de volta</b><div class="muted pequeno">Parte deste valor já foi recebida. Veja em <b>A receber</b>.</div></div>`;
+  const ligado = rc.modo !== 'nao';
+  const chip = (m, t) => `<button class="chip pequeno ${rc.modo === m ? 'on' : ''}" data-acao="modoReceber" data-modo="${m}">${t}</button>`;
+  const totalP = rc.pessoas.reduce((s, p) => s + (p.centavos || 0), 0);
+  let corpo = '';
+  if (rc.modo === 'igreja') corpo = `
+    <p class="muted pequeno" id="txtIgreja">${f.centavos ? `<b>${fmt(f.centavos / 100)}</b> a receber da igreja. Não conta como seu gasto.` : 'O valor todo volta como reembolso da igreja.'}</p>`;
+  else if (rc.modo === 'dividir') corpo = `
+    <div class="pessoas">
+      ${rc.pessoas.map((p, i) => `
+      <div class="pessoa">
+        <input class="campo" data-rec-nome="${i}" list="sugPessoas" placeholder="Nome" value="${esc(p.nome)}" autocomplete="off">
+        <input class="campo valor" data-rec-valor="${i}" data-dinheiro inputmode="numeric" placeholder="R$ 0,00" autocomplete="off"
+          data-centavos="${p.centavos || 0}" value="${p.centavos ? fmt(p.centavos / 100) : ''}">
+        <button class="x-btn" data-acao="tirarPessoa" data-i="${i}" aria-label="Remover pessoa">${icone.x}</button>
+      </div>`).join('')}
+    </div>
+    <datalist id="sugPessoas">${devedoresConhecidos().map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+    <button class="chip pequeno" data-acao="maisPessoa">+ Pessoa</button>
+    <p class="muted pequeno" id="txtParte">Sua parte: <b>${fmt((f.centavos - totalP) / 100)}</b> · a receber: <b>${fmt(totalP / 100)}</b></p>`;
+  return `
+  <div class="card receber-caixa">
+    <div class="linha">
+      <div><b>Receber de volta</b><div class="muted pequeno">Reembolso da igreja ou valor dividido com outras pessoas</div></div>
+      <button class="interruptor ${ligado ? 'on' : ''}" data-acao="ligarReceber" aria-label="Receber de volta"></button>
+    </div>
+    ${ligado ? `<div class="chips" style="margin-top:10px">${chip('igreja', 'Reembolso')}${chip('dividir', 'Valor dividido')}</div>` : ''}
+    ${corpo}
+  </div>`;
+}
+
+function atualizarCaixaReceber() {
+  const el = $('.receber-caixa');
+  if (el && S.form) el.outerHTML = caixaReceber(S.form);
+}
+
+/* Valor mudou: refaz a divisão e os textos sem redesenhar os campos em uso */
+function atualizarTextosReceber() {
+  const f = S.form;
+  if (!f || f.tipo !== 'Saída') return;
+  const rc = f.receber;
+  const ti = $('#txtIgreja');
+  if (ti && f.centavos) ti.innerHTML = `<b>${fmt(f.centavos / 100)}</b> a receber da igreja. Não conta como seu gasto.`;
+  if (rc.modo !== 'dividir') return;
+  dividirIgual(f);
+  rc.pessoas.forEach((p, i) => {
+    const inp = $(`[data-rec-valor="${i}"]`);
+    if (inp && document.activeElement !== inp) { inp.dataset.centavos = p.centavos || 0; inp.value = p.centavos ? fmt(p.centavos / 100) : ''; }
+  });
+  const totalP = rc.pessoas.reduce((s, p) => s + (p.centavos || 0), 0);
+  const tp = $('#txtParte');
+  if (tp) tp.innerHTML = `Sua parte: <b>${fmt((f.centavos - totalP) / 100)}</b> · a receber: <b>${fmt(totalP / 100)}</b>`;
+}
+
+/* Linhas a receber de uma saída, mantendo id e situação das que já existiam */
+function montarReceber(f, antes) {
+  const rc = f.receber, valor = f.centavos / 100;
+  const lista = rc.modo === 'igreja' ? [{ devedor: 'Igreja', valor }]
+    : rc.modo === 'dividir' ? rc.pessoas.map(p => ({ devedor: p.nome.trim(), valor: (p.centavos || 0) / 100 })) : [];
+  const usados = new Set();
+  return lista.map(r => {
+    const velho = (antes || []).find(a => a.devedor === r.devedor && !usados.has(a.id));
+    if (velho) usados.add(velho.id);
+    return { id: velho ? velho.id : uid(), devedor: r.devedor, valor: r2(r.valor), status: velho ? velho.status : 'Pendente' };
+  });
 }
 
 function marcarChips() {
@@ -620,7 +812,11 @@ function sugerirCategoria(txt) {
       if (lista.some(p => k.split(/\s+/).includes(p) || (p.length > 4 && k.includes(p)))) { cat = nome; break; }
     }
   }
-  if (cat && categorias(f.tipo).some(c => c.nome === cat)) { f.categoria = cat; marcarChips(); }
+  if (cat && categorias(f.tipo).some(c => c.nome === cat)) {
+    const mudou = f.categoria !== cat;
+    f.categoria = cat; marcarChips();
+    if (mudou && f.tipo === 'Entrada') atualizarCaixaDizimar();
+  }
 }
 
 /* ---------- ECONOMIAS ---------- */
@@ -646,6 +842,12 @@ function economias() {
   <div class="card bancos">
     ${bancos.map(([b, v]) => `<div class="banco"><span><span class="tag">${esc(b.slice(0, 2).toUpperCase())}</span>${esc(b)}</span><b class="num">${fmt(v)}</b></div>`).join('')}
   </div>` : ''}
+
+  <h2>Dízimos e ofertas</h2>
+  <button class="card linha-btn" data-acao="abrirDizimos">
+    <div><b>Reservado para a igreja</b><div class="muted pequeno">Fora do saldo total. Toque para ver e enviar.</div></div>
+    <b class="num">${fmt(c.reservado)}</b>
+  </button>
 
   <h2>Cofrinhos</h2>
   ${d.cofrinhos.length ? d.cofrinhos.map(cf => cardCofre(cf, c)).join('')
@@ -767,6 +969,185 @@ function folhaMovimentos(id) {
         <span class="val num ${v >= 0 ? 'pos' : 'neg'}">${sinal(v)}</span></div>`;
     }).join('') : '<div class="vazio">Nenhum movimento ainda.</div>'}
     </div>
+    <button class="btn secundario" data-acao="fecharFolha">Fechar</button>`);
+}
+
+/* ---------- DÍZIMOS E OFERTAS ---------- */
+function dizimos() {
+  const d = S.dados;
+  const c = calcular(d, chaveMes());
+  const acharOrigem = id => d.lancamentos.find(l => String(l.id) === String(id));
+  // Agrupa dízimo e oferta pela entrada de origem (mesmo registro)
+  const grupos = {};
+  for (const l of c.pendIgreja) {
+    const g = grupos[l.origemId] || (grupos[l.origemId] = { origemId: l.origemId, dataHora: l.dataHora, dizimo: 0, oferta: 0, idItem: l.id, pendente: false });
+    g[l.parte === 'Oferta' ? 'oferta' : 'dizimo'] += num(l.valor);
+    g.pendente = g.pendente || !!l._pendente;
+    if (l.parte === 'Dízimo') g.idItem = l.id;
+  }
+  const pend = Object.values(grupos).sort((a, b) => String(b.dataHora).localeCompare(String(a.dataHora)));
+  const envios = d.envios.slice().sort((a, b) => String(b.dataHora).localeCompare(String(a.dataHora)));
+
+  if (d.versao < 2) return `
+  <button class="voltar" data-view="painel">${icone.esq} Painel</button>
+  <h1>Dízimos e ofertas</h1>
+  <div class="card dica">${icone.dica}<div><b>Atualize o código da planilha</b><br>Para usar esta parte, cole o novo <b>apps-script/Codigo.gs</b> no Apps Script e publique uma nova versão (veja "Manutenção" no README).</div></div>`;
+
+  return `
+  <button class="voltar" data-view="painel">${icone.esq} Painel</button>
+  <h1>Dízimos e ofertas</h1>
+  <section class="heroi">
+    <div class="rotulo">Total separado</div>
+    <div class="valor-grande num">${fmt(c.reservado)}</div>
+    <div class="rodape">
+      <div class="mes-saldo"><span>Dízimo</span><b class="num">${fmt(c.dizimoRes)}</b></div>
+      <div class="mes-saldo" style="text-align:right"><span>Oferta</span><b class="num">${fmt(c.ofertaRes)}</b></div>
+    </div>
+  </section>
+  <p class="muted pequeno" style="margin:10px 2px 0">Esse valor já saiu da carteira e não entra no saldo total.</p>
+  ${c.reservado > 0 ? `<button class="btn" data-acao="enviarIgreja">Enviei para a igreja</button>` : ''}
+
+  <h2>A enviar</h2>
+  <div class="lista">${pend.length ? pend.map(g => {
+    const o = acharOrigem(g.origemId);
+    const nome = o ? (o.descricao || o.categoria) : 'Entrada';
+    const reg = o && o.registro ? `Nº ${esc(o.registro)} · ` : '';
+    return `<button class="item" data-acao="editarLanc" data-id="${esc(g.idItem)}">
+      <span class="ico" style="background:${corCat('Saída', CAT_DIZIMO)}26;color:${corCat('Saída', CAT_DIZIMO)}">D</span>
+      <span class="meio">
+        <div class="t1">${esc(nome)}${g.pendente ? '<span class="tag-pend">enviando</span>' : ''}</div>
+        <div class="t2">${reg}${dataCurta(g.dataHora)}${o ? ' · entrada de ' + fmt(o.valor) : ''}</div>
+        <div class="t2">Dízimo ${fmt(g.dizimo)} + oferta ${fmt(g.oferta)}</div>
+      </span>
+      <span class="val num">${fmt(g.dizimo + g.oferta)}</span></button>`;
+  }).join('') : '<div class="card vazio">Nada separado agora. Ao registrar uma entrada, ligue o dízimo ou a oferta.</div>'}</div>
+
+  ${envios.length ? `
+  <h2>Enviados à igreja</h2>
+  <div class="lista">${envios.map(e => `
+    <button class="item" data-acao="menuEnvio" data-id="${esc(e.id)}">
+      <span class="ico" style="background:rgba(76,213,150,.15);color:var(--verde)">${icone.sobe}</span>
+      <span class="meio"><div class="t1">Enviado em ${dataCurta(e.dataHora)}</div><div class="t2">Dízimo ${fmt(e.dizimo)} · oferta ${fmt(e.oferta)}</div></span>
+      <span class="val num">${fmt(num(e.dizimo) + num(e.oferta))}</span></button>`).join('')}
+  </div>` : ''}`;
+}
+
+/* Do que é feito o saldo total */
+function folhaComposicao() {
+  const d = S.dados;
+  const c = calcular(d, chaveMes());
+  const linha = (nome, v, sub) => `<div class="banco"><span>${nome}${sub ? `<div class="muted pequeno">${sub}</div>` : ''}</span><b class="num">${fmt(v)}</b></div>`;
+  const cofres = d.cofrinhos.filter(cf => Math.abs(c.saldoCofre[String(cf.id)] || 0) > 0.004);
+  abrirFolha(`
+    <h3>Composição do saldo total</h3>
+    <div class="card bancos composicao">
+      ${linha('Na carteira', c.carteira, 'Disponível para usar')}
+      ${linha('Cofrinhos', c.totalCofres, cofres.length ? cofres.map(cf => esc(cf.nome)).join(', ') : 'Nenhum valor guardado')}
+      ${linha('A receber', c.aReceber, 'Reembolsos da igreja e valores divididos')}
+      <div class="banco total-linha"><span><b>Saldo total</b></span><b class="num">${fmt(c.total)}</b></div>
+    </div>
+    ${c.reservado > 0 ? `<p class="muted pequeno">Fora do saldo total: ${fmt(c.reservado)} separado para a igreja (dízimos e ofertas).</p>` : ''}
+    <button class="btn secundario" data-acao="fecharFolha">Fechar</button>`);
+}
+
+function folhaEnviar() {
+  const c = calcular(S.dados, chaveMes());
+  abrirFolha(`
+    <h3>Enviar para a igreja</h3>
+    <p class="muted pequeno">Confirme depois de fazer a transferência. Tudo o que está separado passa para "Enviados à igreja" e o total separado volta a zero.</p>
+    <div class="card bancos">
+      <div class="banco"><span>Dízimo</span><b class="num">${fmt(c.dizimoRes)}</b></div>
+      <div class="banco"><span>Oferta</span><b class="num">${fmt(c.ofertaRes)}</b></div>
+      <div class="banco"><span><b>Total</b></span><b class="num">${fmt(c.reservado)}</b></div>
+    </div>
+    <button class="btn" data-acao="confirmarEnvio">Confirmar envio</button>
+    <button class="btn secundario" data-acao="fecharFolha">Cancelar</button>`);
+}
+
+function folhaMenuEnvio(id) {
+  const e = S.dados.envios.find(x => String(x.id) === String(id)); if (!e) return;
+  abrirFolha(`
+    <h3>Enviado em ${dataCurta(e.dataHora)}</h3>
+    <p class="muted pequeno">Dízimo ${fmt(e.dizimo)} · oferta ${fmt(e.oferta)}</p>
+    <button class="menu-op perigo" data-acao="desfazerEnvio" data-id="${esc(id)}">${icone.lixo} Desfazer envio (os valores voltam a ficar reservados)</button>
+    <button class="btn secundario" data-acao="fecharFolha">Fechar</button>`);
+}
+
+/* ---------- A RECEBER ---------- */
+function telaReceber() {
+  const d = S.dados;
+  const c = calcular(d, chaveMes());
+  const lanc = id => d.lancamentos.find(l => String(l.id) === String(id));
+  const abertos = d.receber.filter(r => r.status !== 'Recebido');
+  const porDevedor = {};
+  abertos.forEach(r => (porDevedor[r.devedor] = porDevedor[r.devedor] || []).push(r));
+  const nomes = Object.keys(porDevedor).sort((a, b) => (a === 'Igreja' ? -1 : b === 'Igreja' ? 1 : a.localeCompare(b)));
+  const recebidos = d.receber.filter(r => r.status === 'Recebido')
+    .sort((a, b) => String(b.atualizadoEm).localeCompare(String(a.atualizadoEm))).slice(0, 20);
+  const totIgreja = r2((porDevedor.Igreja || []).reduce((s, r) => s + num(r.valor), 0));
+
+  const item = (r, comQuem) => {
+    const l = lanc(r.lancamentoId);
+    const nome = (comQuem ? (r.devedor === 'Igreja' ? 'Igreja' : r.devedor) + ' · ' : '') + (l ? (l.descricao || l.categoria) : 'Saída');
+    const igreja = r.devedor === 'Igreja';
+    const tag = r.status === 'Recebido' ? `<span class="tag-st ok">recebido ${dataCurta(r.atualizadoEm || r.dataHora)}</span>`
+      : igreja ? `<span class="tag-st ${r.status === 'Nota enviada' ? 'env' : ''}">${r.status === 'Nota enviada' ? 'nota enviada' : 'nota pendente'}</span>` : '';
+    return `<button class="item" data-acao="itemReceber" data-id="${esc(r.id)}">
+      <span class="meio">
+        <div class="t1">${esc(nome)}${r._pendente ? '<span class="tag-pend">enviando</span>' : ''}</div>
+        <div class="t2">${[r.registro ? 'Nº ' + r.registro : '', dataCurta(r.dataHora), l ? 'pago ' + fmt(l.valor) : ''].filter(Boolean).map(esc).join(' · ')} ${tag}</div>
+      </span>
+      <span class="val num">${fmt(r.valor)}</span></button>`;
+  };
+
+  if (d.versao < 3) return `
+  <button class="voltar" data-view="painel">${icone.esq} Painel</button>
+  <h1>A receber</h1>
+  <div class="card dica">${icone.dica}<div><b>Atualize o código da planilha</b><br>Para usar esta parte, cole o novo <b>apps-script/Codigo.gs</b> no Apps Script e publique uma nova versão (veja "Manutenção" no README).</div></div>`;
+
+  return `
+  <button class="voltar" data-view="painel">${icone.esq} Painel</button>
+  <h1>A receber</h1>
+  <section class="heroi">
+    <div class="rotulo">Total a receber</div>
+    <div class="valor-grande num">${fmt(c.aReceber)}</div>
+    <div class="rodape">
+      <div class="mes-saldo"><span>Reembolsos da igreja</span><b class="num">${fmt(totIgreja)}</b></div>
+      <div class="mes-saldo" style="text-align:right"><span>Pessoas</span><b class="num">${fmt(r2(c.aReceber - totIgreja))}</b></div>
+    </div>
+  </section>
+  <p class="muted pequeno" style="margin:10px 2px 0">Já saiu da carteira, não conta como seu gasto e entra no saldo total. Quando receber, o valor volta para a carteira.</p>
+
+  ${nomes.length ? nomes.map(n => {
+    const rs = porDevedor[n].sort((a, b) => String(b.dataHora).localeCompare(String(a.dataHora)));
+    const tot = r2(rs.reduce((s, r) => s + num(r.valor), 0));
+    return `
+  <div class="h2-linha"><h2>${n === 'Igreja' ? 'Reembolsos da igreja' : esc(n)} · ${fmt(tot)}</h2>
+    <button class="link-btn" data-acao="mudarReceber" data-status="Recebido" data-ids="${esc(rs.map(r => r.id).join(','))}">Recebi tudo</button></div>
+  <div class="lista">${rs.map(r => item(r)).join('')}</div>`;
+  }).join('') : `<div class="card vazio" style="margin-top:14px">Nada a receber. Ao registrar uma saída, ligue "Receber de volta".</div>`}
+
+  ${recebidos.length ? `
+  <h2>Recebidos</h2>
+  <div class="lista">${recebidos.map(r => item(r, true)).join('')}</div>` : ''}`;
+}
+
+function folhaItemReceber(id) {
+  const r = S.dados.receber.find(x => String(x.id) === String(id)); if (!r) return;
+  const l = S.dados.lancamentos.find(x => String(x.id) === String(r.lancamentoId));
+  const igreja = r.devedor === 'Igreja';
+  const op = (st, txt, cls = '') => `<button class="menu-op ${cls}" data-acao="mudarReceber" data-status="${st}" data-ids="${esc(r.id)}">${txt}</button>`;
+  let acoes = '';
+  if (r.status === 'Recebido') acoes = op(igreja ? 'Nota enviada' : 'Pendente', `${icone.esq} Desfazer: ainda não recebi`, 'perigo');
+  else {
+    acoes = op('Recebido', `${icone.sobe} Recebi ${fmt(r.valor)}`);
+    if (igreja) acoes += r.status === 'Nota enviada' ? op('Pendente', `${icone.esq} Voltar para nota pendente`) : op('Nota enviada', `${icone.lista} Enviei a nota para a igreja`);
+  }
+  abrirFolha(`
+    <h3>${igreja ? 'Reembolso da igreja' : esc(r.devedor)} · ${fmt(r.valor)}</h3>
+    <p class="muted pequeno" style="margin:0 0 6px">${l ? esc(l.descricao || l.categoria) + ' · pago ' + fmt(l.valor) + ' em ' + dataCurta(l.dataHora) : ''}${r.registro ? ' · Nº ' + esc(r.registro) : ''}</p>
+    ${acoes}
+    ${l ? `<button class="menu-op" data-acao="editarLanc" data-id="${esc(l.id)}">${icone.lapis} Editar a saída</button>` : ''}
     <button class="btn secundario" data-acao="fecharFolha">Fechar</button>`);
 }
 
@@ -935,7 +1316,7 @@ const ACOES = {
     render();
     sugerirCategoria(S.form.descricao);
   },
-  cat(el) { S.form.categoria = el.dataset.nome; S.form.catManual = true; marcarChips(); },
+  cat(el) { S.form.categoria = el.dataset.nome; S.form.catManual = true; marcarChips(); if (S.form.tipo === 'Entrada') atualizarCaixaDizimar(); },
   pag(el) { S.form.pagamento = el.dataset.nome; marcarChips(); },
   async salvarLanc() {
     const f = S.form;
@@ -946,10 +1327,33 @@ const ACOES = {
       categoria: f.categoria, pagamento: f.tipo === 'Saída' ? f.pagamento : '', descricao: f.descricao.trim()
     };
     if (f.tipo === 'Saída') lsSet('hrm_ultimo_pag', f.pagamento);
+    const comDizimo = f.tipo === 'Entrada' && S.dados.versao >= 2 && !f.sepEnviada;
+    const dizimo = comDizimo && liga(f, 'dizimo'), ofertar = comDizimo && liga(f, 'oferta');
+    if (comDizimo) { const pref = lsGet('hrm_separar', {}); pref[f.categoria] = { dizimo, oferta: ofertar }; lsSet('hrm_separar', pref); }
+    // Dízimo e oferta montados aqui para o lançamento funcionar mesmo sem internet
+    const montarSeps = antes => [['Dízimo', dizimo ? dizimoDe(dados.valor) : 0], ['Oferta', ofertar ? r2(ofertaDe(f)) : 0]]
+      .filter(([, v]) => v > 0)
+      .map(([parte, v]) => ({ id: ((antes || []).find(x => x.parte === parte) || {}).id || uid(), dataHora: dados.dataHora, tipo: 'Saída',
+        valor: v, categoria: CAT_DIZIMO, pagamento: 'Pix', descricao: parte + ' · ' + (dados.descricao || dados.categoria),
+        origemId: dados.id, parte }));
+    if ((dizimo || ofertar) && !f.id) dados.separacoes = montarSeps();
+
+    const comReceber = f.tipo === 'Saída' && S.dados.versao >= 3 && !f.receber.travado;
+    if (comReceber && f.receber.modo === 'escolher') return avisar('Escolha Reembolso ou Valor dividido, ou desligue "Receber de volta".', true);
+    if (comReceber && f.receber.modo === 'dividir') {
+      const ps = f.receber.pessoas;
+      if (!ps.length) return avisar('Adicione quem vai te pagar.', true);
+      if (ps.some(p => !p.nome.trim())) return avisar('Digite o nome de cada pessoa.', true);
+      if (ps.some(p => !p.centavos)) return avisar('Informe quanto cada pessoa vai te pagar.', true);
+      if (ps.reduce((s, p) => s + p.centavos, 0) > f.centavos) return avisar('O valor a receber é maior que o valor pago.', true);
+    }
+    const recAntes = f.id ? S.dados.receber.filter(r => String(r.lancamentoId) === String(f.id)) : [];
+    if (comReceber && f.receber.modo !== 'nao' && !f.id) dados.receber = montarReceber(f);
 
     if (!f.id) {
       enfileirar({ acao: 'addLancamento', dados });
-      avisar(f.tipo === 'Saída' ? `Saída de ${fmt(dados.valor)} registrada` : `Entrada de ${fmt(dados.valor)} registrada`);
+      avisar(f.tipo === 'Saída' ? `Saída de ${fmt(dados.valor)} registrada${dados.receber ? ` · ${fmt(dados.receber.reduce((s, r) => s + r.valor, 0))} a receber` : ''}`
+        : `Entrada de ${fmt(dados.valor)} registrada${dados.separacoes ? ` · ${fmt(dados.separacoes.reduce((s, x) => s + x.valor, 0))} separado para a igreja` : ''}`);
       S.form = null; S.view = 'painel'; S.mes = dados.dataHora.slice(0, 7);
       render(); window.scrollTo(0, 0);
       processarFila();
@@ -957,11 +1361,15 @@ const ACOES = {
     }
     const pend = S.fila.find(x => x.acao === 'addLancamento' && x.dados.id === f.id);
     if (pend) {
+      if (dizimo || ofertar) dados.separacoes = montarSeps(pend.dados.separacoes);
+      if (comReceber && f.receber.modo !== 'nao') dados.receber = montarReceber(f, pend.dados.receber);
       pend.dados = dados; salvarFila();
       avisar('Lançamento atualizado');
       S.form = null; S.view = 'historico'; render(); processarFila();
       return;
     }
+    if (comDizimo || f.temSep) { dados.dizimo = dizimo; dados.oferta = ofertar ? r2(ofertaDe(f)) : 0; }
+    if (comReceber || (recAntes.length && !f.receber.travado)) dados.receber = f.tipo === 'Saída' ? montarReceber(f, recAntes) : [];
     if (await executar('editLancamento', dados, 'Lançamento atualizado')) { S.form = null; S.view = 'historico'; render(); }
   },
   async excluirLanc() {
@@ -973,12 +1381,76 @@ const ACOES = {
   },
   cancelarEdicao() { S.form = null; S.view = 'historico'; render(); },
   editarLanc(el) {
-    const l = S.dados.lancamentos.find(x => String(x.id) === el.dataset.id);
+    let l = S.dados.lancamentos.find(x => String(x.id) === el.dataset.id);
     if (!l) return;
+    fecharFolha();
+    if (ehSeparacao(l)) {
+      // Dízimo e oferta seguem a entrada: para mudar, edita-se a entrada
+      const o = S.dados.lancamentos.find(x => String(x.id) === String(l.origemId));
+      if (!o || l.envioId) { S.view = 'dizimos'; render(); window.scrollTo(0, 0); return avisar(l.envioId ? 'Este dízimo já foi enviado à igreja.' : 'A entrada deste dízimo não existe mais.'); }
+      avisar('O dízimo e a oferta seguem a entrada: mude-os aqui.');
+      l = o;
+    }
+    const seps = S.dados.lancamentos.filter(x => ehSeparacao(x) && String(x.origemId) === String(l.id));
+    const oferta = seps.find(x => x.parte === 'Oferta'), ent = l.tipo === 'Entrada';
     S.form = { id: l.id, tipo: l.tipo, centavos: Math.round(num(l.valor) * 100), categoria: l.categoria, catManual: true,
-      pagamento: l.pagamento || 'Pix', descricao: l.descricao || '', dataHora: l.dataHora };
+      pagamento: l.pagamento || 'Pix', descricao: l.descricao || '', dataHora: l.dataHora,
+      dizimo: ent ? seps.some(x => x.parte === 'Dízimo') : null, oferta: ent ? !!oferta : null,
+      temSep: seps.length > 0, sepEnviada: seps.some(x => x.envioId),
+      ofertaCentavos: oferta ? Math.round(num(oferta.valor) * 100) : 0, ofertaManual: !!oferta,
+      receber: receberDoForm(l) };
     S.view = 'lancar';
     render(); window.scrollTo(0, 0);
+  },
+
+  /* dízimos e ofertas */
+  alternarSep(el) { const p = el.dataset.parte; S.form[p] = !liga(S.form, p); atualizarCaixaDizimar(); },
+  abrirDizimos() { irPara('dizimos'); },
+  composicao() { folhaComposicao(); },
+  abrirReceber() { irPara('receber'); },
+  ligarReceber() {
+    const rc = S.form.receber;
+    rc.modo = rc.modo === 'nao' ? 'escolher' : 'nao';
+    atualizarCaixaReceber();
+  },
+  modoReceber(el) {
+    const rc = S.form.receber;
+    rc.modo = el.dataset.modo;
+    if (rc.modo === 'dividir' && !rc.pessoas.length) { rc.pessoas = [{ nome: '', centavos: 0 }]; rc.manual = false; dividirIgual(S.form); }
+    atualizarCaixaReceber();
+    const n = $('[data-rec-nome="0"]'); if (n && !n.value) n.focus();
+  },
+  maisPessoa() {
+    const rc = S.form.receber;
+    rc.pessoas.push({ nome: '', centavos: 0 }); rc.manual = false; dividirIgual(S.form);
+    atualizarCaixaReceber();
+    const n = $(`[data-rec-nome="${rc.pessoas.length - 1}"]`); if (n) n.focus();
+  },
+  tirarPessoa(el) {
+    const rc = S.form.receber;
+    rc.pessoas.splice(+el.dataset.i, 1);
+    if (!rc.pessoas.length) rc.modo = 'escolher';
+    rc.manual = false; dividirIgual(S.form);
+    atualizarCaixaReceber();
+  },
+  itemReceber(el) { folhaItemReceber(el.dataset.id); },
+  async mudarReceber(el) {
+    const ids = el.dataset.ids.split(',');
+    const st = el.dataset.status;
+    const msg = st === 'Recebido' ? 'Recebido! O valor voltou para a carteira' : st === 'Nota enviada' ? 'Nota marcada como enviada' : 'Situação atualizada';
+    if (S.fila.length) return avisar('Espere os lançamentos pendentes subirem para a planilha.', true);
+    if (await executar('statusReceber', { ids, status: st, dataHora: isoLocal() }, msg)) { fecharFolha(); render(); }
+  },
+  enviarIgreja() { folhaEnviar(); },
+  async confirmarEnvio() {
+    const v = calcular(S.dados, chaveMes()).reservado;
+    if (S.fila.length) return avisar('Espere os lançamentos pendentes subirem para a planilha.', true);
+    if (await executar('enviarIgreja', { id: uid(), dataHora: isoLocal() }, `${fmt(v)} enviado para a igreja`)) { fecharFolha(); render(); }
+  },
+  menuEnvio(el) { folhaMenuEnvio(el.dataset.id); },
+  async desfazerEnvio(el) {
+    if (!confirm('Desfazer este envio? Os valores voltam a ficar reservados.')) return;
+    if (await executar('desfazerEnvio', { id: el.dataset.id }, 'Envio desfeito')) { fecharFolha(); render(); }
   },
 
   /* categorias */
@@ -1097,12 +1569,18 @@ document.addEventListener('input', e => {
   }
   const campo = t.dataset.campo;
   if (campo && S.form && S.view === 'lancar') {
-    if (campo === 'centavos') S.form.centavos = +t.dataset.centavos || 0;
+    if (campo === 'centavos') { S.form.centavos = +t.dataset.centavos || 0; atualizarPrevDizimo(); atualizarTextosReceber(); }
     else if (campo === 'dataHora') S.form.dataHora = t.value ? t.value + ':00' : null;
     else S.form[campo] = t.value;
   }
   if (t.id === 'inDesc') sugerirCategoria(t.value);
   if (t.id === 'inSaldoNovo') atualizarDif();
+  if (t.dataset.recNome !== undefined && S.form) S.form.receber.pessoas[+t.dataset.recNome].nome = t.value;
+  if (t.dataset.recValor !== undefined && S.form) {
+    S.form.receber.pessoas[+t.dataset.recValor].centavos = +t.dataset.centavos || 0;
+    S.form.receber.manual = true; atualizarTextosReceber();
+  }
+  if (t.id === 'inOferta' && S.form) { S.form.ofertaCentavos = +t.dataset.centavos || 0; S.form.ofertaManual = true; atualizarPrevDizimo(); }
 });
 
 document.addEventListener('keydown', e => {
