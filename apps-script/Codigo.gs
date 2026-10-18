@@ -6,12 +6,15 @@
  * 3. Implante como "App da Web" (Executar como: Eu | Quem pode acessar: Qualquer pessoa).
  */
 const PIN = '0000';
+const VERSAO = 2;
+const CAT_DIZIMO = 'Dízimos e ofertas';
 
 const ABAS = {
-  Lancamentos:  ['id', 'dataHora', 'tipo', 'valor', 'categoria', 'pagamento', 'descricao'],
+  Lancamentos:  ['id', 'dataHora', 'tipo', 'valor', 'categoria', 'pagamento', 'descricao', 'origemId', 'envioId'],
   Categorias:   ['tipo', 'nome', 'cor'],
   Cofrinhos:    ['id', 'nome', 'banco', 'meta', 'criadoEm'],
   MovCofrinhos: ['id', 'dataHora', 'cofrinhoId', 'tipo', 'valor', 'obs'],
+  EnviosIgreja: ['id', 'dataHora', 'dizimo', 'oferta', 'obs'],
   Config:       ['chave', 'valor']
 };
 
@@ -75,6 +78,10 @@ function executar_(acao, d) {
         valor: num_(d.valor), categoria: d.categoria, pagamento: d.pagamento || '',
         descricao: d.descricao || ''
       });
+      // Dízimo e oferta separados desta entrada (vem pronto do app, para funcionar offline)
+      if (d.tipo === 'Entrada' && d.separacao && !acharLinha_('Lancamentos', d.separacao.id)) {
+        anexar_('Lancamentos', separacao_(d, d.separacao.id));
+      }
       return;
 
     case 'editLancamento':
@@ -83,10 +90,29 @@ function executar_(acao, d) {
         dataHora: d.dataHora, tipo: d.tipo, valor: num_(d.valor),
         categoria: d.categoria, pagamento: d.pagamento || '', descricao: d.descricao || ''
       });
+      if (d.dizimar !== undefined) ajustarSeparacao_(d, d.tipo === 'Entrada' && !!d.dizimar);
       return;
 
     case 'delLancamento':
       remover_('Lancamentos', d.id);
+      separacoesDe_(d.id).filter(s => !s.envioId).forEach(s => remover_('Lancamentos', s.id));
+      return;
+
+    case 'enviarIgreja': {
+      const pendentes = ler_('Lancamentos').filter(l => l.origemId && !l.envioId);
+      if (!pendentes.length) throw new Error('Não há dízimos e ofertas reservados.');
+      const total = pendentes.reduce((s, l) => s + num_(l.valor), 0);
+      const id = d.id || novoId_();
+      const dizimo = Math.round(total * 50) / 100;
+      anexar_('EnviosIgreja', { id: id, dataHora: d.dataHora || agora_(), dizimo: dizimo, oferta: num_(total - dizimo), obs: d.obs || '' });
+      pendentes.forEach(l => atualizar_('Lancamentos', l.id, { envioId: id }));
+      return;
+    }
+
+    case 'desfazerEnvio':
+      ler_('Lancamentos').filter(l => String(l.envioId) === String(d.id))
+        .forEach(l => atualizar_('Lancamentos', l.id, { envioId: '' }));
+      remover_('EnviosIgreja', d.id);
       return;
 
     case 'addCategoria': {
@@ -172,9 +198,13 @@ function preparar_() {
       sh = ss.insertSheet(nome);
       sh.getRange(1, 1, 1, ABAS[nome].length).setValues([ABAS[nome]]).setFontWeight('bold');
       sh.setFrozenRows(1);
-      if (nome === 'Lancamentos' || nome === 'MovCofrinhos') sh.getRange('B:B').setNumberFormat('@');
+      if (nome === 'Lancamentos' || nome === 'MovCofrinhos' || nome === 'EnviosIgreja') sh.getRange('B:B').setNumberFormat('@');
       if (nome === 'Cofrinhos') sh.getRange('E:E').setNumberFormat('@');
       if (nome === 'Categorias') sh.getRange(2, 1, CATEGORIAS_PADRAO.length, 3).setValues(CATEGORIAS_PADRAO);
+    } else {
+      // Planilha de uma versão anterior: acrescenta as colunas novas no fim
+      const cab = ABAS[nome], n = sh.getLastColumn();
+      if (n < cab.length) sh.getRange(1, n + 1, 1, cab.length - n).setValues([cab.slice(n)]).setFontWeight('bold');
     }
   });
   const padrao = ss.getSheetByName('Página1') || ss.getSheetByName('Sheet1');
@@ -189,7 +219,9 @@ function carregar_() {
     categorias: ler_('Categorias'),
     cofrinhos: ler_('Cofrinhos').map(r => ({ ...r, meta: num_(r.meta) })),
     movimentos: ler_('MovCofrinhos').map(r => ({ ...r, valor: num_(r.valor) })),
-    config: cfg
+    envios: ler_('EnviosIgreja').map(r => ({ ...r, dizimo: num_(r.dizimo), oferta: num_(r.oferta) })),
+    config: cfg,
+    versao: VERSAO
   };
 }
 
@@ -242,6 +274,36 @@ function saldoCofrinho_(id) {
   return ler_('MovCofrinhos')
     .filter(m => String(m.cofrinhoId) === String(id))
     .reduce((s, m) => s + (m.tipo === 'Resgatar' ? -num_(m.valor) : num_(m.valor)), 0);
+}
+
+/* ---------- dízimos e ofertas ---------- */
+
+/** Dízimo = 10% arredondado para cima no centavo. A oferta é sempre igual ao dízimo. */
+function dizimoDe_(valor) {
+  return Math.ceil(Math.round(num_(valor) * 100) / 10) / 100;
+}
+
+function separacao_(entrada, id) {
+  return {
+    id: id || novoId_(), dataHora: entrada.dataHora || agora_(), tipo: 'Saída',
+    valor: num_(dizimoDe_(entrada.valor) * 2), categoria: CAT_DIZIMO, pagamento: 'Pix',
+    descricao: 'Dízimo e oferta · ' + (entrada.descricao || entrada.categoria), origemId: entrada.id
+  };
+}
+
+function separacoesDe_(origemId) {
+  return ler_('Lancamentos').filter(l => l.origemId && String(l.origemId) === String(origemId));
+}
+
+/** Depois de editar uma entrada: cria, atualiza ou remove o dízimo dela (o que já foi enviado não muda). */
+function ajustarSeparacao_(entrada, dizimar) {
+  const atual = separacoesDe_(entrada.id).filter(s => !s.envioId)[0];
+  const jaEnviada = separacoesDe_(entrada.id).some(s => s.envioId);
+  if (!dizimar) { if (atual) remover_('Lancamentos', atual.id); return; }
+  if (jaEnviada) return;
+  const nova = separacao_(entrada, atual && atual.id);
+  if (atual) atualizar_('Lancamentos', atual.id, nova);
+  else anexar_('Lancamentos', nova);
 }
 
 /* ---------- utilidades ---------- */

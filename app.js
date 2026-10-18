@@ -2,7 +2,7 @@
 /* HRM Finance — app de controle financeiro pessoal
    Dados: Google Sheets (via Apps Script). Telas: este arquivo. */
 
-const VERSAO_APP = '1.0';
+const VERSAO_APP = '1.1';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -15,6 +15,10 @@ const fmtCurto = v => Math.abs(v) >= 10000 ? BRL_CURTO.format(v) : fmt(v);
 const sinal = v => (v > 0.004 ? '+' : v < -0.004 ? '−' : '') + fmt(Math.abs(v));
 
 const PAGAMENTOS = ['Pix', 'Débito', 'Dinheiro'];
+const CAT_DIZIMO = 'Dízimos e ofertas';
+/* Dízimo = 10% arredondado para cima no centavo; a oferta é sempre igual ao dízimo */
+const dizimoDe = v => Math.ceil(Math.round(num(v) * 100) / 10) / 100;
+const ehSeparacao = l => !!l.origemId;
 const CORES = ['#F2994A', '#56CCF2', '#F2C94C', '#BB6BD9', '#27AE60', '#6FCF97', '#EB5757', '#2D9CDB',
   '#FF8FB1', '#A3E635', '#FFB86B', '#9B8CFF', '#4DD4C6', '#C0C7D6'];
 
@@ -97,7 +101,7 @@ function normalizarBase(d) {
   if (!d) return null;
   return {
     lancamentos: d.lancamentos || [], categorias: d.categorias || [], cofrinhos: d.cofrinhos || [],
-    movimentos: d.movimentos || [], config: d.config || {}
+    movimentos: d.movimentos || [], envios: d.envios || [], config: d.config || {}, versao: d.versao || 1
   };
 }
 function mesclarFila(base) {
@@ -105,7 +109,10 @@ function mesclarFila(base) {
   const d = { ...base, lancamentos: base.lancamentos.slice() };
   const ids = new Set(d.lancamentos.map(l => String(l.id)));
   for (const f of S.fila) {
-    if (f.acao === 'addLancamento' && !ids.has(String(f.dados.id))) d.lancamentos.push({ ...f.dados, _pendente: true });
+    if (f.acao !== 'addLancamento') continue;
+    if (!ids.has(String(f.dados.id))) d.lancamentos.push({ ...f.dados, _pendente: true });
+    const sep = f.dados.separacao;
+    if (sep && !ids.has(String(sep.id))) d.lancamentos.push({ ...sep, _pendente: true });
   }
   return d;
 }
@@ -236,13 +243,16 @@ function calcular(d, mes) {
     else if (m.tipo === 'Resgatar') { resg += v; if (noMes) resgMes += v; }
     else if (m.tipo === 'Rendimento' && noMes) { rendMes += v; rendCofreMes[id] = (rendCofreMes[id] || 0) + v; }
   }
+  // Dízimos e ofertas separados que ainda não foram enviados à igreja (já contaram como saída)
+  const pendIgreja = d.lancamentos.filter(l => ehSeparacao(l) && !l.envioId);
+  const reservado = r2(pendIgreja.reduce((s, l) => s + num(l.valor), 0));
   const carteira = r2(ini + ent - sai - guard + resg);
   const totalCofres = r2(d.cofrinhos.reduce((s, c) => s + (saldoCofre[String(c.id)] || 0), 0));
   return {
     carteira, totalCofres, total: r2(carteira + totalCofres),
     entMes: r2(entMes), saiMes: r2(saiMes), saldoMes: r2(entMes - saiMes),
     guardadoMes: r2(guardMes - resgMes), rendMes: r2(rendMes),
-    porCat, saldoCofre, rendCofreMes
+    porCat, saldoCofre, rendCofreMes, reservado, pendIgreja
   };
 }
 const saldoDoCofre = id => r2(calcular(S.dados, chaveMes()).saldoCofre[String(id)] || 0);
@@ -321,7 +331,7 @@ function render() {
 
   mostrarMolde(true);
   if (S.view === 'lancar' && !S.form) S.form = novoForm();
-  const views = { painel, historico, lancar, economias, ajustes };
+  const views = { painel, historico, lancar, economias, ajustes, dizimos };
   $('#tela').innerHTML = (views[S.view] || painel)();
   $$('#nav [data-view]').forEach(b => b.classList.toggle('ativo', b.dataset.view === S.view));
   atualizarSync();
@@ -495,6 +505,8 @@ function painel() {
     </div>
   </div>
   <div class="card guardado"><span>Guardado no mês</span><b class="num">${sinal(c.guardadoMes)}</b></div>
+  ${c.reservado > 0 ? `
+  <button class="card guardado igreja" data-acao="abrirDizimos"><span>Reservado para a igreja</span><b class="num">${fmt(c.reservado)}</b></button>` : ''}
 
   ${primeiraVez ? `
   <div class="card dica">${icone.dica}<div><b>Primeiros passos</b><br>Toque no <b>+</b> para registrar um gasto ou uma entrada. Seus cofrinhos você cria na aba <b>Economias</b>.</div></div>` : ''}
@@ -546,7 +558,8 @@ function historico() {
 /* ---------- LANÇAR ---------- */
 function novoForm() {
   return { id: null, tipo: 'Saída', centavos: 0, categoria: null, catManual: false,
-    pagamento: lsGet('hrm_ultimo_pag', 'Pix'), descricao: '', dataHora: null };
+    pagamento: lsGet('hrm_ultimo_pag', 'Pix'), descricao: '', dataHora: null,
+    dizimar: null, sepId: null, sepEnviada: false };
 }
 
 function lancar() {
@@ -589,6 +602,8 @@ function lancar() {
     placeholder="${f.tipo === 'Saída' ? 'Ex.: mercado, almoço, uber' : 'Ex.: salário de outubro'}" value="${esc(f.descricao)}">
   <datalist id="sugDesc">${descricoes.map(x => `<option value="${esc(x)}">`).join('')}</datalist>
 
+  ${f.tipo === 'Entrada' && S.dados.versao >= 2 ? caixaDizimar(f) : ''}
+
   <label class="rotulo-campo" for="inData">Data e hora</label>
   <input id="inData" type="datetime-local" class="campo" data-campo="dataHora" value="${(f.dataHora || isoLocal()).slice(0, 16)}">
 
@@ -596,6 +611,39 @@ function lancar() {
   ${edit ? `
   <button class="btn perigo" data-acao="excluirLanc">Excluir lançamento</button>
   <button class="btn secundario" data-acao="cancelarEdicao">Cancelar</button>` : ''}`;
+}
+
+/* Vale para o formulário: marcado se o usuário escolheu, senão a última escolha para esta categoria */
+function vaiDizimar(f) {
+  if (f.dizimar !== null) return f.dizimar;
+  return lsGet('hrm_dizimar', {})[f.categoria] !== false;
+}
+
+function textoDizimo(centavos) {
+  if (!centavos) return 'Dízimo e oferta: 10% cada';
+  const dz = dizimoDe(centavos / 100);
+  return `Dízimo ${fmt(dz)} + oferta ${fmt(dz)} = <b>${fmt(dz * 2)}</b>`;
+}
+
+function caixaDizimar(f) {
+  if (f.sepEnviada) return `
+  <div class="card dizimar"><div><b>Dizimar</b><div class="muted pequeno">O dízimo desta entrada já foi enviado à igreja.</div></div></div>`;
+  const on = vaiDizimar(f);
+  return `
+  <div class="card dizimar">
+    <div><b>Dizimar</b><div class="muted pequeno" id="prevDizimo">${on ? textoDizimo(f.centavos) : 'Esta entrada não será dizimada'}</div></div>
+    <button class="interruptor ${on ? 'on' : ''}" data-acao="dizimar" aria-label="Dizimar esta entrada"></button>
+  </div>`;
+}
+
+function atualizarCaixaDizimar() {
+  const el = $('.dizimar');
+  if (el && S.form) el.outerHTML = caixaDizimar(S.form);
+}
+
+function atualizarPrevDizimo() {
+  const el = $('#prevDizimo');
+  if (el && S.form && vaiDizimar(S.form)) el.innerHTML = textoDizimo(S.form.centavos);
 }
 
 function marcarChips() {
@@ -620,7 +668,11 @@ function sugerirCategoria(txt) {
       if (lista.some(p => k.split(/\s+/).includes(p) || (p.length > 4 && k.includes(p)))) { cat = nome; break; }
     }
   }
-  if (cat && categorias(f.tipo).some(c => c.nome === cat)) { f.categoria = cat; marcarChips(); }
+  if (cat && categorias(f.tipo).some(c => c.nome === cat)) {
+    const mudou = f.categoria !== cat;
+    f.categoria = cat; marcarChips();
+    if (mudou && f.tipo === 'Entrada') atualizarCaixaDizimar();
+  }
 }
 
 /* ---------- ECONOMIAS ---------- */
@@ -646,6 +698,12 @@ function economias() {
   <div class="card bancos">
     ${bancos.map(([b, v]) => `<div class="banco"><span><span class="tag">${esc(b.slice(0, 2).toUpperCase())}</span>${esc(b)}</span><b class="num">${fmt(v)}</b></div>`).join('')}
   </div>` : ''}
+
+  <h2>Dízimos e ofertas</h2>
+  <button class="card linha-btn" data-acao="abrirDizimos">
+    <div><b>Reservado para a igreja</b><div class="muted pequeno">Fora do saldo total. Toque para ver e enviar.</div></div>
+    <b class="num">${fmt(c.reservado)}</b>
+  </button>
 
   <h2>Cofrinhos</h2>
   ${d.cofrinhos.length ? d.cofrinhos.map(cf => cardCofre(cf, c)).join('')
@@ -767,6 +825,82 @@ function folhaMovimentos(id) {
         <span class="val num ${v >= 0 ? 'pos' : 'neg'}">${sinal(v)}</span></div>`;
     }).join('') : '<div class="vazio">Nenhum movimento ainda.</div>'}
     </div>
+    <button class="btn secundario" data-acao="fecharFolha">Fechar</button>`);
+}
+
+/* ---------- DÍZIMOS E OFERTAS ---------- */
+function dizimos() {
+  const d = S.dados;
+  const c = calcular(d, chaveMes());
+  const metade = r2(c.reservado / 2);
+  const acharOrigem = id => d.lancamentos.find(l => String(l.id) === String(id));
+  const pend = c.pendIgreja.slice().sort((a, b) => String(b.dataHora).localeCompare(String(a.dataHora)));
+  const envios = d.envios.slice().sort((a, b) => String(b.dataHora).localeCompare(String(a.dataHora)));
+
+  if (d.versao < 2) return `
+  <button class="voltar" data-view="painel">${icone.esq} Painel</button>
+  <h1>Dízimos e ofertas</h1>
+  <div class="card dica">${icone.dica}<div><b>Atualize o código da planilha</b><br>Para usar esta parte, cole o novo <b>apps-script/Codigo.gs</b> no Apps Script e publique uma nova versão (veja "Manutenção" no README).</div></div>`;
+
+  return `
+  <button class="voltar" data-view="painel">${icone.esq} Painel</button>
+  <h1>Dízimos e ofertas</h1>
+  <section class="heroi">
+    <div class="rotulo">Reservado para a igreja</div>
+    <div class="valor-grande num">${fmt(c.reservado)}</div>
+    <div class="rodape">
+      <div class="mes-saldo"><span>Dízimo</span><b class="num">${fmt(metade)}</b></div>
+      <div class="mes-saldo" style="text-align:right"><span>Oferta</span><b class="num">${fmt(r2(c.reservado - metade))}</b></div>
+    </div>
+  </section>
+  <p class="muted pequeno" style="margin:10px 2px 0">Esse valor já saiu da carteira e não entra no saldo total.</p>
+  ${c.reservado > 0 ? `<button class="btn" data-acao="enviarIgreja">Enviei para a igreja</button>` : ''}
+
+  <h2>A enviar</h2>
+  <div class="lista">${pend.length ? pend.map(l => {
+    const o = acharOrigem(l.origemId);
+    const dz = r2(num(l.valor) / 2);
+    const nome = o ? (o.descricao || o.categoria) : 'Entrada';
+    return `<button class="item" data-acao="editarLanc" data-id="${esc(l.id)}">
+      <span class="ico" style="background:${corCat('Saída', CAT_DIZIMO)}26;color:${corCat('Saída', CAT_DIZIMO)}">D</span>
+      <span class="meio">
+        <div class="t1">${esc(nome)}${l._pendente ? '<span class="tag-pend">enviando</span>' : ''}</div>
+        <div class="t2">${dataCurta(l.dataHora)}${o ? ' · entrada de ' + fmt(o.valor) : ''} · dízimo ${fmt(dz)} + oferta ${fmt(dz)}</div>
+      </span>
+      <span class="val num">${fmt(l.valor)}</span></button>`;
+  }).join('') : '<div class="card vazio">Nada reservado agora. Ao registrar uma entrada, ligue "Dizimar".</div>'}</div>
+
+  ${envios.length ? `
+  <h2>Enviados à igreja</h2>
+  <div class="lista">${envios.map(e => `
+    <button class="item" data-acao="menuEnvio" data-id="${esc(e.id)}">
+      <span class="ico" style="background:rgba(76,213,150,.15);color:var(--verde)">${icone.sobe}</span>
+      <span class="meio"><div class="t1">Enviado em ${dataCurta(e.dataHora)}</div><div class="t2">Dízimo ${fmt(e.dizimo)} · oferta ${fmt(e.oferta)}</div></span>
+      <span class="val num">${fmt(num(e.dizimo) + num(e.oferta))}</span></button>`).join('')}
+  </div>` : ''}`;
+}
+
+function folhaEnviar() {
+  const c = calcular(S.dados, chaveMes());
+  const metade = r2(c.reservado / 2);
+  abrirFolha(`
+    <h3>Enviar para a igreja</h3>
+    <p class="muted pequeno">Confirme depois de fazer a transferência. Os ${c.pendIgreja.length} valores reservados passam para "Enviados à igreja" e o reservado volta a zero.</p>
+    <div class="card bancos">
+      <div class="banco"><span>Dízimo</span><b class="num">${fmt(metade)}</b></div>
+      <div class="banco"><span>Oferta</span><b class="num">${fmt(r2(c.reservado - metade))}</b></div>
+      <div class="banco"><span><b>Total</b></span><b class="num">${fmt(c.reservado)}</b></div>
+    </div>
+    <button class="btn" data-acao="confirmarEnvio">Confirmar envio</button>
+    <button class="btn secundario" data-acao="fecharFolha">Cancelar</button>`);
+}
+
+function folhaMenuEnvio(id) {
+  const e = S.dados.envios.find(x => String(x.id) === String(id)); if (!e) return;
+  abrirFolha(`
+    <h3>Enviado em ${dataCurta(e.dataHora)}</h3>
+    <p class="muted pequeno">Dízimo ${fmt(e.dizimo)} · oferta ${fmt(e.oferta)}</p>
+    <button class="menu-op perigo" data-acao="desfazerEnvio" data-id="${esc(id)}">${icone.lixo} Desfazer envio (os valores voltam a ficar reservados)</button>
     <button class="btn secundario" data-acao="fecharFolha">Fechar</button>`);
 }
 
@@ -935,7 +1069,7 @@ const ACOES = {
     render();
     sugerirCategoria(S.form.descricao);
   },
-  cat(el) { S.form.categoria = el.dataset.nome; S.form.catManual = true; marcarChips(); },
+  cat(el) { S.form.categoria = el.dataset.nome; S.form.catManual = true; marcarChips(); if (S.form.tipo === 'Entrada') atualizarCaixaDizimar(); },
   pag(el) { S.form.pagamento = el.dataset.nome; marcarChips(); },
   async salvarLanc() {
     const f = S.form;
@@ -946,10 +1080,20 @@ const ACOES = {
       categoria: f.categoria, pagamento: f.tipo === 'Saída' ? f.pagamento : '', descricao: f.descricao.trim()
     };
     if (f.tipo === 'Saída') lsSet('hrm_ultimo_pag', f.pagamento);
+    const comDizimo = f.tipo === 'Entrada' && S.dados.versao >= 2 && !f.sepEnviada;
+    const dizimar = comDizimo && vaiDizimar(f);
+    if (comDizimo) { const pref = lsGet('hrm_dizimar', {}); pref[f.categoria] = dizimar; lsSet('hrm_dizimar', pref); }
+    if (dizimar && !f.id) {
+      // Montado aqui para o lançamento funcionar mesmo sem internet
+      const dz = dizimoDe(dados.valor);
+      dados.separacao = { id: uid(), dataHora: dados.dataHora, tipo: 'Saída', valor: r2(dz * 2), categoria: CAT_DIZIMO,
+        pagamento: 'Pix', descricao: 'Dízimo e oferta · ' + (dados.descricao || dados.categoria), origemId: dados.id };
+    }
 
     if (!f.id) {
       enfileirar({ acao: 'addLancamento', dados });
-      avisar(f.tipo === 'Saída' ? `Saída de ${fmt(dados.valor)} registrada` : `Entrada de ${fmt(dados.valor)} registrada`);
+      avisar(f.tipo === 'Saída' ? `Saída de ${fmt(dados.valor)} registrada`
+        : `Entrada de ${fmt(dados.valor)} registrada${dados.separacao ? ` · ${fmt(dados.separacao.valor)} reservado para a igreja` : ''}`);
       S.form = null; S.view = 'painel'; S.mes = dados.dataHora.slice(0, 7);
       render(); window.scrollTo(0, 0);
       processarFila();
@@ -957,11 +1101,17 @@ const ACOES = {
     }
     const pend = S.fila.find(x => x.acao === 'addLancamento' && x.dados.id === f.id);
     if (pend) {
+      if (dizimar) {
+        const dz = dizimoDe(dados.valor), antes = pend.dados.separacao;
+        dados.separacao = { id: antes ? antes.id : uid(), dataHora: dados.dataHora, tipo: 'Saída', valor: r2(dz * 2), categoria: CAT_DIZIMO,
+          pagamento: 'Pix', descricao: 'Dízimo e oferta · ' + (dados.descricao || dados.categoria), origemId: dados.id };
+      }
       pend.dados = dados; salvarFila();
       avisar('Lançamento atualizado');
       S.form = null; S.view = 'historico'; render(); processarFila();
       return;
     }
+    if (comDizimo || f.sepId) dados.dizimar = dizimar;
     if (await executar('editLancamento', dados, 'Lançamento atualizado')) { S.form = null; S.view = 'historico'; render(); }
   },
   async excluirLanc() {
@@ -973,12 +1123,36 @@ const ACOES = {
   },
   cancelarEdicao() { S.form = null; S.view = 'historico'; render(); },
   editarLanc(el) {
-    const l = S.dados.lancamentos.find(x => String(x.id) === el.dataset.id);
+    let l = S.dados.lancamentos.find(x => String(x.id) === el.dataset.id);
     if (!l) return;
+    if (ehSeparacao(l)) {
+      // Dízimo e oferta seguem a entrada: para mudar, edita-se a entrada
+      const o = S.dados.lancamentos.find(x => String(x.id) === String(l.origemId));
+      if (!o || l.envioId) { S.view = 'dizimos'; render(); window.scrollTo(0, 0); return avisar(l.envioId ? 'Este dízimo já foi enviado à igreja.' : 'A entrada deste dízimo não existe mais.'); }
+      avisar('O dízimo segue a entrada: edite a entrada para mudar.');
+      l = o;
+    }
+    const sep = S.dados.lancamentos.find(x => ehSeparacao(x) && String(x.origemId) === String(l.id));
     S.form = { id: l.id, tipo: l.tipo, centavos: Math.round(num(l.valor) * 100), categoria: l.categoria, catManual: true,
-      pagamento: l.pagamento || 'Pix', descricao: l.descricao || '', dataHora: l.dataHora };
+      pagamento: l.pagamento || 'Pix', descricao: l.descricao || '', dataHora: l.dataHora,
+      dizimar: l.tipo === 'Entrada' ? !!sep : null, sepId: sep ? sep.id : null, sepEnviada: !!(sep && sep.envioId) };
     S.view = 'lancar';
     render(); window.scrollTo(0, 0);
+  },
+
+  /* dízimos e ofertas */
+  dizimar() { S.form.dizimar = !vaiDizimar(S.form); render(); },
+  abrirDizimos() { irPara('dizimos'); },
+  enviarIgreja() { folhaEnviar(); },
+  async confirmarEnvio() {
+    const v = calcular(S.dados, chaveMes()).reservado;
+    if (S.fila.length) return avisar('Espere os lançamentos pendentes subirem para a planilha.', true);
+    if (await executar('enviarIgreja', { id: uid(), dataHora: isoLocal() }, `${fmt(v)} enviado para a igreja`)) { fecharFolha(); render(); }
+  },
+  menuEnvio(el) { folhaMenuEnvio(el.dataset.id); },
+  async desfazerEnvio(el) {
+    if (!confirm('Desfazer este envio? Os valores voltam a ficar reservados.')) return;
+    if (await executar('desfazerEnvio', { id: el.dataset.id }, 'Envio desfeito')) { fecharFolha(); render(); }
   },
 
   /* categorias */
@@ -1097,7 +1271,7 @@ document.addEventListener('input', e => {
   }
   const campo = t.dataset.campo;
   if (campo && S.form && S.view === 'lancar') {
-    if (campo === 'centavos') S.form.centavos = +t.dataset.centavos || 0;
+    if (campo === 'centavos') { S.form.centavos = +t.dataset.centavos || 0; atualizarPrevDizimo(); }
     else if (campo === 'dataHora') S.form.dataHora = t.value ? t.value + ':00' : null;
     else S.form[campo] = t.value;
   }

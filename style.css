@@ -283,3 +283,12 @@ input[type="datetime-local"].campo, input[type="date"].campo { color-scheme: dar
   main { padding-top: 16px; }
   .heroi .valor-grande { font-size: 46px; }
 }
+
+/* dízimos e ofertas */
+.guardado.igreja { width: 100%; text-align: left; }
+.linha-btn { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; text-align: left; }
+.linha-btn > b { color: var(--azul-claro); white-space: nowrap; }
+.dizimar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; padding: 12px 14px; }
+.dizimar .muted b { color: var(--texto); }
+.voltar { display: inline-flex; align-items: center; gap: 4px; color: var(--suave); font-size: 14px; font-weight: 600; padding: 4px 0; }
+.voltar svg { width: 18px; height: 18px; }
