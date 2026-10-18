@@ -723,7 +723,8 @@ function dividirIgual(f) {
 function caixaReceber(f) {
   const rc = f.receber;
   if (rc.travado) return `
-  <div class="card receber-caixa"><b>Vai receber de volta?</b><div class="muted pequeno">Parte deste valor já foi recebida. Veja em <b>A receber</b>.</div></div>`;
+  <div class="card receber-caixa"><b>Receber de volta</b><div class="muted pequeno">Parte deste valor já foi recebida. Veja em <b>A receber</b>.</div></div>`;
+  const ligado = rc.modo !== 'nao';
   const chip = (m, t) => `<button class="chip pequeno ${rc.modo === m ? 'on' : ''}" data-acao="modoReceber" data-modo="${m}">${t}</button>`;
   const totalP = rc.pessoas.reduce((s, p) => s + (p.centavos || 0), 0);
   let corpo = '';
@@ -744,8 +745,11 @@ function caixaReceber(f) {
     <p class="muted pequeno" id="txtParte">Sua parte: <b>${fmt((f.centavos - totalP) / 100)}</b> · a receber: <b>${fmt(totalP / 100)}</b></p>`;
   return `
   <div class="card receber-caixa">
-    <b>Vai receber de volta?</b>
-    <div class="chips" style="margin-top:8px">${chip('nao', 'Não')}${chip('igreja', 'Reembolso da igreja')}${chip('dividir', 'Dividir com pessoas')}</div>
+    <div class="linha">
+      <div><b>Receber de volta</b><div class="muted pequeno">Reembolso da igreja ou valor dividido com outras pessoas</div></div>
+      <button class="interruptor ${ligado ? 'on' : ''}" data-acao="ligarReceber" aria-label="Receber de volta"></button>
+    </div>
+    ${ligado ? `<div class="chips" style="margin-top:10px">${chip('igreja', 'Reembolso')}${chip('dividir', 'Valor dividido')}</div>` : ''}
     ${corpo}
   </div>`;
 }
@@ -1121,7 +1125,7 @@ function telaReceber() {
   <div class="h2-linha"><h2>${n === 'Igreja' ? 'Reembolsos da igreja' : esc(n)} · ${fmt(tot)}</h2>
     <button class="link-btn" data-acao="mudarReceber" data-status="Recebido" data-ids="${esc(rs.map(r => r.id).join(','))}">Recebi tudo</button></div>
   <div class="lista">${rs.map(r => item(r)).join('')}</div>`;
-  }).join('') : `<div class="card vazio" style="margin-top:14px">Nada a receber. Ao registrar uma saída, use "Vai receber de volta?".</div>`}
+  }).join('') : `<div class="card vazio" style="margin-top:14px">Nada a receber. Ao registrar uma saída, ligue "Receber de volta".</div>`}
 
   ${recebidos.length ? `
   <h2>Recebidos</h2>
@@ -1335,6 +1339,7 @@ const ACOES = {
     if ((dizimo || ofertar) && !f.id) dados.separacoes = montarSeps();
 
     const comReceber = f.tipo === 'Saída' && S.dados.versao >= 3 && !f.receber.travado;
+    if (comReceber && f.receber.modo === 'escolher') return avisar('Escolha Reembolso ou Valor dividido, ou desligue "Receber de volta".', true);
     if (comReceber && f.receber.modo === 'dividir') {
       const ps = f.receber.pessoas;
       if (!ps.length) return avisar('Adicione quem vai te pagar.', true);
@@ -1403,6 +1408,11 @@ const ACOES = {
   abrirDizimos() { irPara('dizimos'); },
   composicao() { folhaComposicao(); },
   abrirReceber() { irPara('receber'); },
+  ligarReceber() {
+    const rc = S.form.receber;
+    rc.modo = rc.modo === 'nao' ? 'escolher' : 'nao';
+    atualizarCaixaReceber();
+  },
   modoReceber(el) {
     const rc = S.form.receber;
     rc.modo = el.dataset.modo;
@@ -1419,7 +1429,7 @@ const ACOES = {
   tirarPessoa(el) {
     const rc = S.form.receber;
     rc.pessoas.splice(+el.dataset.i, 1);
-    if (!rc.pessoas.length) rc.modo = 'nao';
+    if (!rc.pessoas.length) rc.modo = 'escolher';
     rc.manual = false; dividirIgual(S.form);
     atualizarCaixaReceber();
   },

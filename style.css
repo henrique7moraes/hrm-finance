@@ -313,3 +313,4 @@ input[type="datetime-local"].campo, input[type="date"].campo { color-scheme: dar
 .tag-st { font-size: 10px; font-weight: 700; color: var(--dourado); background: rgba(242, 201, 76, .12); padding: 1px 6px; border-radius: 6px; margin-left: 2px; white-space: nowrap; }
 .tag-st.env { color: var(--azul-claro); background: rgba(127, 184, 240, .14); }
 .tag-st.ok { color: var(--verde); background: rgba(76, 213, 150, .12); }
+.receber-caixa .linha { display: flex; align-items: center; justify-content: space-between; gap: 12px; }

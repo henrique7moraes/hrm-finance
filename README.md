@@ -84,8 +84,8 @@ App pessoal de controle financeiro do Henrique: registro imediato de entradas e 
 | Separar dízimo e oferta de uma entrada | Ao registrar a entrada, ligue **Dízimo** e/ou **Oferta** |
 | Ver o que está reservado para a igreja | **Painel → Reservado para a igreja** (ou **Economias**) |
 | Registrar o envio do mês à igreja | **Dízimos e ofertas → Enviei para a igreja** |
-| Registrar compra que a igreja vai reembolsar | Na saída, **Vai receber de volta? → Reembolso da igreja** |
-| Dividir um gasto com outras pessoas | Na saída, **Vai receber de volta? → Dividir com pessoas** |
+| Registrar compra que a igreja vai reembolsar | Na saída, ligue **Receber de volta → Reembolso** |
+| Dividir um gasto com outras pessoas | Na saída, ligue **Receber de volta → Valor dividido** |
 | Marcar nota enviada ou valor recebido | **Painel → A receber** → toque no item |
 | Ver de que é feito o saldo total | **Painel → Saldo total** |
 
