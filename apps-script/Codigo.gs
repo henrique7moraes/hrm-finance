@@ -10,7 +10,7 @@ const VERSAO = 2;
 const CAT_DIZIMO = 'Dízimos e ofertas';
 
 const ABAS = {
-  Lancamentos:  ['id', 'dataHora', 'tipo', 'valor', 'categoria', 'pagamento', 'descricao', 'origemId', 'envioId'],
+  Lancamentos:  ['id', 'dataHora', 'tipo', 'valor', 'categoria', 'pagamento', 'descricao', 'registro', 'origemId', 'parte', 'envioId'],
   Categorias:   ['tipo', 'nome', 'cor'],
   Cofrinhos:    ['id', 'nome', 'banco', 'meta', 'criadoEm'],
   MovCofrinhos: ['id', 'dataHora', 'cofrinhoId', 'tipo', 'valor', 'obs'],
@@ -73,14 +73,16 @@ function executar_(acao, d) {
     case 'addLancamento':
       if (acharLinha_('Lancamentos', d.id)) return; // já gravado (envio repetido)
       validarValor_(d.valor);
-      anexar_('Lancamentos', {
+      const nova = anexar_('Lancamentos', {
         id: d.id || novoId_(), dataHora: d.dataHora || agora_(), tipo: d.tipo,
         valor: num_(d.valor), categoria: d.categoria, pagamento: d.pagamento || '',
         descricao: d.descricao || ''
       });
-      // Dízimo e oferta separados desta entrada (vem pronto do app, para funcionar offline)
-      if (d.tipo === 'Entrada' && d.separacao && !acharLinha_('Lancamentos', d.separacao.id)) {
-        anexar_('Lancamentos', separacao_(d, d.separacao.id));
+      // Dízimo e oferta separados desta entrada (vêm prontos do app, para funcionar offline)
+      if (d.tipo === 'Entrada' && Array.isArray(d.separacoes)) {
+        d.separacoes.forEach(sp => {
+          if (num_(sp.valor) > 0 && !acharLinha_('Lancamentos', sp.id)) anexar_('Lancamentos', separacao_(nova, sp.parte, sp.valor, sp.id));
+        });
       }
       return;
 
@@ -90,7 +92,7 @@ function executar_(acao, d) {
         dataHora: d.dataHora, tipo: d.tipo, valor: num_(d.valor),
         categoria: d.categoria, pagamento: d.pagamento || '', descricao: d.descricao || ''
       });
-      if (d.dizimar !== undefined) ajustarSeparacao_(d, d.tipo === 'Entrada' && !!d.dizimar);
+      if (d.dizimar !== undefined) ajustarSeparacao_(d, d.tipo === 'Entrada' && !!d.dizimar, d.oferta);
       return;
 
     case 'delLancamento':
@@ -101,10 +103,9 @@ function executar_(acao, d) {
     case 'enviarIgreja': {
       const pendentes = ler_('Lancamentos').filter(l => l.origemId && !l.envioId);
       if (!pendentes.length) throw new Error('Não há dízimos e ofertas reservados.');
-      const total = pendentes.reduce((s, l) => s + num_(l.valor), 0);
+      const soma = parte => num_(pendentes.filter(l => l.parte === parte).reduce((s, l) => s + num_(l.valor), 0));
       const id = d.id || novoId_();
-      const dizimo = Math.round(total * 50) / 100;
-      anexar_('EnviosIgreja', { id: id, dataHora: d.dataHora || agora_(), dizimo: dizimo, oferta: num_(total - dizimo), obs: d.obs || '' });
+      anexar_('EnviosIgreja', { id: id, dataHora: d.dataHora || agora_(), dizimo: soma('Dízimo'), oferta: soma('Oferta'), obs: d.obs || '' });
       pendentes.forEach(l => atualizar_('Lancamentos', l.id, { envioId: id }));
       return;
     }
@@ -204,7 +205,10 @@ function preparar_() {
     } else {
       // Planilha de uma versão anterior: acrescenta as colunas novas no fim
       const cab = ABAS[nome], n = sh.getLastColumn();
-      if (n < cab.length) sh.getRange(1, n + 1, 1, cab.length - n).setValues([cab.slice(n)]).setFontWeight('bold');
+      if (n < cab.length) {
+        sh.getRange(1, n + 1, 1, cab.length - n).setValues([cab.slice(n)]).setFontWeight('bold');
+        if (nome === 'Lancamentos') numerarRegistros_(sh);
+      }
     }
   });
   const padrao = ss.getSheetByName('Página1') || ss.getSheetByName('Sheet1');
@@ -246,7 +250,9 @@ function ler_(nome) {
 }
 
 function anexar_(nome, obj) {
+  if (nome === 'Lancamentos' && !obj.registro) obj = { ...obj, registro: proximoRegistro_() };
   aba_(nome).appendRow(ABAS[nome].map(c => obj[c] === undefined ? '' : obj[c]));
+  return obj;
 }
 
 function acharLinha_(nome, id) {
@@ -276,18 +282,36 @@ function saldoCofrinho_(id) {
     .reduce((s, m) => s + (m.tipo === 'Resgatar' ? -num_(m.valor) : num_(m.valor)), 0);
 }
 
+/* ---------- registros ---------- */
+
+/** Número de registro de cada lançamento (1, 2, 3…). O dízimo e a oferta reutilizam o número da entrada. */
+function proximoRegistro_() {
+  const col = ABAS.Lancamentos.indexOf('registro') + 1;
+  const vals = aba_('Lancamentos').getRange(1, col, Math.max(aba_('Lancamentos').getLastRow(), 1), 1).getValues();
+  return vals.slice(1).reduce((m, r) => Math.max(m, parseInt(r[0], 10) || 0), 0) + 1;
+}
+
+/** Planilha antiga: dá número aos lançamentos que ainda não têm, na ordem das linhas. */
+function numerarRegistros_(sh) {
+  const n = sh.getLastRow();
+  if (n < 2) return;
+  const col = ABAS.Lancamentos.indexOf('registro') + 1;
+  sh.getRange(2, col, n - 1, 1).setValues(Array.from({ length: n - 1 }, (_, i) => [i + 1]));
+}
+
 /* ---------- dízimos e ofertas ---------- */
 
-/** Dízimo = 10% arredondado para cima no centavo. A oferta é sempre igual ao dízimo. */
+/** Dízimo = 10% arredondado para cima no centavo. A oferta começa igual ao dízimo e pode ser mudada. */
 function dizimoDe_(valor) {
   return Math.ceil(Math.round(num_(valor) * 100) / 10) / 100;
 }
 
-function separacao_(entrada, id) {
+function separacao_(entrada, parte, valor, id) {
   return {
     id: id || novoId_(), dataHora: entrada.dataHora || agora_(), tipo: 'Saída',
-    valor: num_(dizimoDe_(entrada.valor) * 2), categoria: CAT_DIZIMO, pagamento: 'Pix',
-    descricao: 'Dízimo e oferta · ' + (entrada.descricao || entrada.categoria), origemId: entrada.id
+    valor: num_(valor), categoria: CAT_DIZIMO, pagamento: 'Pix',
+    descricao: parte + ' · ' + (entrada.descricao || entrada.categoria),
+    registro: entrada.registro, origemId: entrada.id, parte: parte  // mesmo registro da entrada
   };
 }
 
@@ -295,15 +319,20 @@ function separacoesDe_(origemId) {
   return ler_('Lancamentos').filter(l => l.origemId && String(l.origemId) === String(origemId));
 }
 
-/** Depois de editar uma entrada: cria, atualiza ou remove o dízimo dela (o que já foi enviado não muda). */
-function ajustarSeparacao_(entrada, dizimar) {
-  const atual = separacoesDe_(entrada.id).filter(s => !s.envioId)[0];
-  const jaEnviada = separacoesDe_(entrada.id).some(s => s.envioId);
-  if (!dizimar) { if (atual) remover_('Lancamentos', atual.id); return; }
-  if (jaEnviada) return;
-  const nova = separacao_(entrada, atual && atual.id);
-  if (atual) atualizar_('Lancamentos', atual.id, nova);
-  else anexar_('Lancamentos', nova);
+/** Depois de editar uma entrada: cria, atualiza ou remove o dízimo e a oferta dela (o que já foi enviado não muda). */
+function ajustarSeparacao_(entrada, dizimar, oferta) {
+  const seps = separacoesDe_(entrada.id);
+  if (seps.some(sp => sp.envioId)) return;
+  const linha = ler_('Lancamentos').filter(l => String(l.id) === String(entrada.id))[0];
+  entrada = { ...entrada, registro: linha && linha.registro };
+  const valores = { 'Dízimo': dizimar ? dizimoDe_(entrada.valor) : 0, 'Oferta': dizimar ? num_(oferta === undefined ? dizimoDe_(entrada.valor) : oferta) : 0 };
+  Object.keys(valores).forEach(parte => {
+    const atual = seps.filter(sp => sp.parte === parte)[0];
+    if (valores[parte] <= 0) { if (atual) remover_('Lancamentos', atual.id); return; }
+    const nova = separacao_(entrada, parte, valores[parte], atual && atual.id);
+    if (atual) atualizar_('Lancamentos', atual.id, nova);
+    else anexar_('Lancamentos', nova);
+  });
 }
 
 /* ---------- utilidades ---------- */

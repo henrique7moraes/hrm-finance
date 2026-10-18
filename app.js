@@ -16,7 +16,7 @@ const sinal = v => (v > 0.004 ? '+' : v < -0.004 ? '−' : '') + fmt(Math.abs(v)
 
 const PAGAMENTOS = ['Pix', 'Débito', 'Dinheiro'];
 const CAT_DIZIMO = 'Dízimos e ofertas';
-/* Dízimo = 10% arredondado para cima no centavo; a oferta é sempre igual ao dízimo */
+/* Dízimo = 10% arredondado para cima no centavo; a oferta começa igual ao dízimo e pode ser mudada */
 const dizimoDe = v => Math.ceil(Math.round(num(v) * 100) / 10) / 100;
 const ehSeparacao = l => !!l.origemId;
 const CORES = ['#F2994A', '#56CCF2', '#F2C94C', '#BB6BD9', '#27AE60', '#6FCF97', '#EB5757', '#2D9CDB',
@@ -111,8 +111,9 @@ function mesclarFila(base) {
   for (const f of S.fila) {
     if (f.acao !== 'addLancamento') continue;
     if (!ids.has(String(f.dados.id))) d.lancamentos.push({ ...f.dados, _pendente: true });
-    const sep = f.dados.separacao;
-    if (sep && !ids.has(String(sep.id))) d.lancamentos.push({ ...sep, _pendente: true });
+    for (const sep of f.dados.separacoes || []) {
+      if (!ids.has(String(sep.id))) d.lancamentos.push({ ...sep, _pendente: true });
+    }
   }
   return d;
 }
@@ -246,13 +247,14 @@ function calcular(d, mes) {
   // Dízimos e ofertas separados que ainda não foram enviados à igreja (já contaram como saída)
   const pendIgreja = d.lancamentos.filter(l => ehSeparacao(l) && !l.envioId);
   const reservado = r2(pendIgreja.reduce((s, l) => s + num(l.valor), 0));
+  const dizimoRes = r2(pendIgreja.filter(l => l.parte === 'Dízimo').reduce((s, l) => s + num(l.valor), 0));
   const carteira = r2(ini + ent - sai - guard + resg);
   const totalCofres = r2(d.cofrinhos.reduce((s, c) => s + (saldoCofre[String(c.id)] || 0), 0));
   return {
     carteira, totalCofres, total: r2(carteira + totalCofres),
     entMes: r2(entMes), saiMes: r2(saiMes), saldoMes: r2(entMes - saiMes),
     guardadoMes: r2(guardMes - resgMes), rendMes: r2(rendMes),
-    porCat, saldoCofre, rendCofreMes, reservado, pendIgreja
+    porCat, saldoCofre, rendCofreMes, reservado, pendIgreja, dizimoRes, ofertaRes: r2(reservado - dizimoRes)
   };
 }
 const saldoDoCofre = id => r2(calcular(S.dados, chaveMes()).saldoCofre[String(id)] || 0);
@@ -434,7 +436,7 @@ function itemLanc(l) {
   const cor = corCat(l.tipo, l.categoria);
   const entrada = l.tipo === 'Entrada';
   const t1 = l.descricao ? esc(l.descricao) : esc(l.categoria);
-  const extras = [l.descricao ? l.categoria : '', l.pagamento, hora(l.dataHora)].filter(Boolean).map(esc).join(' · ');
+  const extras = [l.registro ? 'Nº ' + l.registro : '', l.descricao ? l.categoria : '', l.pagamento, hora(l.dataHora)].filter(Boolean).map(esc).join(' · ');
   return `
   <button class="item" data-acao="editarLanc" data-id="${esc(l.id)}">
     <span class="ico" style="background:${cor}26;color:${cor}">${esc((l.categoria || '?').charAt(0).toUpperCase())}</span>
@@ -559,7 +561,7 @@ function historico() {
 function novoForm() {
   return { id: null, tipo: 'Saída', centavos: 0, categoria: null, catManual: false,
     pagamento: lsGet('hrm_ultimo_pag', 'Pix'), descricao: '', dataHora: null,
-    dizimar: null, sepId: null, sepEnviada: false };
+    dizimar: null, temSep: false, sepEnviada: false, ofertaCentavos: 0, ofertaManual: false };
 }
 
 function lancar() {
@@ -619,20 +621,32 @@ function vaiDizimar(f) {
   return lsGet('hrm_dizimar', {})[f.categoria] !== false;
 }
 
-function textoDizimo(centavos) {
-  if (!centavos) return 'Dízimo e oferta: 10% cada';
-  const dz = dizimoDe(centavos / 100);
-  return `Dízimo ${fmt(dz)} + oferta ${fmt(dz)} = <b>${fmt(dz * 2)}</b>`;
+/* A oferta acompanha o dízimo até o usuário digitar outro valor */
+const ofertaDe = f => f.ofertaManual ? f.ofertaCentavos / 100 : dizimoDe(f.centavos / 100);
+
+function textoDizimo(f) {
+  if (!f.centavos) return 'Dízimo de 10% e oferta';
+  const dz = dizimoDe(f.centavos / 100);
+  return `Dízimo ${fmt(dz)} + oferta ${fmt(ofertaDe(f))} = <b>${fmt(dz + ofertaDe(f))}</b>`;
 }
 
 function caixaDizimar(f) {
   if (f.sepEnviada) return `
-  <div class="card dizimar"><div><b>Dizimar</b><div class="muted pequeno">O dízimo desta entrada já foi enviado à igreja.</div></div></div>`;
+  <div class="card dizimar"><div class="linha"><div><b>Dizimar</b><div class="muted pequeno">O dízimo e a oferta desta entrada já foram enviados à igreja.</div></div></div></div>`;
   const on = vaiDizimar(f);
+  const of = Math.round(ofertaDe(f) * 100);
   return `
   <div class="card dizimar">
-    <div><b>Dizimar</b><div class="muted pequeno" id="prevDizimo">${on ? textoDizimo(f.centavos) : 'Esta entrada não será dizimada'}</div></div>
-    <button class="interruptor ${on ? 'on' : ''}" data-acao="dizimar" aria-label="Dizimar esta entrada"></button>
+    <div class="linha">
+      <div><b>Dizimar</b><div class="muted pequeno" id="prevDizimo">${on ? textoDizimo(f) : 'Esta entrada não será dizimada'}</div></div>
+      <button class="interruptor ${on ? 'on' : ''}" data-acao="dizimar" aria-label="Dizimar esta entrada"></button>
+    </div>
+    ${on ? `
+    <div class="linha oferta">
+      <label for="inOferta">Oferta</label>
+      <input id="inOferta" class="campo" data-dinheiro inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"
+        data-centavos="${of}" value="${of ? fmt(of / 100) : ''}">
+    </div>` : ''}
   </div>`;
 }
 
@@ -642,8 +656,15 @@ function atualizarCaixaDizimar() {
 }
 
 function atualizarPrevDizimo() {
+  const f = S.form;
   const el = $('#prevDizimo');
-  if (el && S.form && vaiDizimar(S.form)) el.innerHTML = textoDizimo(S.form.centavos);
+  if (!el || !f || !vaiDizimar(f)) return;
+  el.innerHTML = textoDizimo(f);
+  const i = $('#inOferta');
+  if (i && !f.ofertaManual && document.activeElement !== i) {
+    const c = Math.round(ofertaDe(f) * 100);
+    i.dataset.centavos = c; i.value = c ? fmt(c / 100) : '';
+  }
 }
 
 function marcarChips() {
@@ -832,9 +853,16 @@ function folhaMovimentos(id) {
 function dizimos() {
   const d = S.dados;
   const c = calcular(d, chaveMes());
-  const metade = r2(c.reservado / 2);
   const acharOrigem = id => d.lancamentos.find(l => String(l.id) === String(id));
-  const pend = c.pendIgreja.slice().sort((a, b) => String(b.dataHora).localeCompare(String(a.dataHora)));
+  // Agrupa dízimo e oferta pela entrada de origem (mesmo registro)
+  const grupos = {};
+  for (const l of c.pendIgreja) {
+    const g = grupos[l.origemId] || (grupos[l.origemId] = { origemId: l.origemId, dataHora: l.dataHora, dizimo: 0, oferta: 0, idItem: l.id, pendente: false });
+    g[l.parte === 'Oferta' ? 'oferta' : 'dizimo'] += num(l.valor);
+    g.pendente = g.pendente || !!l._pendente;
+    if (l.parte === 'Dízimo') g.idItem = l.id;
+  }
+  const pend = Object.values(grupos).sort((a, b) => String(b.dataHora).localeCompare(String(a.dataHora)));
   const envios = d.envios.slice().sort((a, b) => String(b.dataHora).localeCompare(String(a.dataHora)));
 
   if (d.versao < 2) return `
@@ -846,29 +874,30 @@ function dizimos() {
   <button class="voltar" data-view="painel">${icone.esq} Painel</button>
   <h1>Dízimos e ofertas</h1>
   <section class="heroi">
-    <div class="rotulo">Reservado para a igreja</div>
+    <div class="rotulo">Total separado</div>
     <div class="valor-grande num">${fmt(c.reservado)}</div>
     <div class="rodape">
-      <div class="mes-saldo"><span>Dízimo</span><b class="num">${fmt(metade)}</b></div>
-      <div class="mes-saldo" style="text-align:right"><span>Oferta</span><b class="num">${fmt(r2(c.reservado - metade))}</b></div>
+      <div class="mes-saldo"><span>Dízimo</span><b class="num">${fmt(c.dizimoRes)}</b></div>
+      <div class="mes-saldo" style="text-align:right"><span>Oferta</span><b class="num">${fmt(c.ofertaRes)}</b></div>
     </div>
   </section>
   <p class="muted pequeno" style="margin:10px 2px 0">Esse valor já saiu da carteira e não entra no saldo total.</p>
   ${c.reservado > 0 ? `<button class="btn" data-acao="enviarIgreja">Enviei para a igreja</button>` : ''}
 
   <h2>A enviar</h2>
-  <div class="lista">${pend.length ? pend.map(l => {
-    const o = acharOrigem(l.origemId);
-    const dz = r2(num(l.valor) / 2);
+  <div class="lista">${pend.length ? pend.map(g => {
+    const o = acharOrigem(g.origemId);
     const nome = o ? (o.descricao || o.categoria) : 'Entrada';
-    return `<button class="item" data-acao="editarLanc" data-id="${esc(l.id)}">
+    const reg = o && o.registro ? `Nº ${esc(o.registro)} · ` : '';
+    return `<button class="item" data-acao="editarLanc" data-id="${esc(g.idItem)}">
       <span class="ico" style="background:${corCat('Saída', CAT_DIZIMO)}26;color:${corCat('Saída', CAT_DIZIMO)}">D</span>
       <span class="meio">
-        <div class="t1">${esc(nome)}${l._pendente ? '<span class="tag-pend">enviando</span>' : ''}</div>
-        <div class="t2">${dataCurta(l.dataHora)}${o ? ' · entrada de ' + fmt(o.valor) : ''} · dízimo ${fmt(dz)} + oferta ${fmt(dz)}</div>
+        <div class="t1">${esc(nome)}${g.pendente ? '<span class="tag-pend">enviando</span>' : ''}</div>
+        <div class="t2">${reg}${dataCurta(g.dataHora)}${o ? ' · entrada de ' + fmt(o.valor) : ''}</div>
+        <div class="t2">Dízimo ${fmt(g.dizimo)} + oferta ${fmt(g.oferta)}</div>
       </span>
-      <span class="val num">${fmt(l.valor)}</span></button>`;
-  }).join('') : '<div class="card vazio">Nada reservado agora. Ao registrar uma entrada, ligue "Dizimar".</div>'}</div>
+      <span class="val num">${fmt(g.dizimo + g.oferta)}</span></button>`;
+  }).join('') : '<div class="card vazio">Nada separado agora. Ao registrar uma entrada, ligue "Dizimar".</div>'}</div>
 
   ${envios.length ? `
   <h2>Enviados à igreja</h2>
@@ -882,13 +911,12 @@ function dizimos() {
 
 function folhaEnviar() {
   const c = calcular(S.dados, chaveMes());
-  const metade = r2(c.reservado / 2);
   abrirFolha(`
     <h3>Enviar para a igreja</h3>
-    <p class="muted pequeno">Confirme depois de fazer a transferência. Os ${c.pendIgreja.length} valores reservados passam para "Enviados à igreja" e o reservado volta a zero.</p>
+    <p class="muted pequeno">Confirme depois de fazer a transferência. Tudo o que está separado passa para "Enviados à igreja" e o total separado volta a zero.</p>
     <div class="card bancos">
-      <div class="banco"><span>Dízimo</span><b class="num">${fmt(metade)}</b></div>
-      <div class="banco"><span>Oferta</span><b class="num">${fmt(r2(c.reservado - metade))}</b></div>
+      <div class="banco"><span>Dízimo</span><b class="num">${fmt(c.dizimoRes)}</b></div>
+      <div class="banco"><span>Oferta</span><b class="num">${fmt(c.ofertaRes)}</b></div>
       <div class="banco"><span><b>Total</b></span><b class="num">${fmt(c.reservado)}</b></div>
     </div>
     <button class="btn" data-acao="confirmarEnvio">Confirmar envio</button>
@@ -1083,17 +1111,18 @@ const ACOES = {
     const comDizimo = f.tipo === 'Entrada' && S.dados.versao >= 2 && !f.sepEnviada;
     const dizimar = comDizimo && vaiDizimar(f);
     if (comDizimo) { const pref = lsGet('hrm_dizimar', {}); pref[f.categoria] = dizimar; lsSet('hrm_dizimar', pref); }
-    if (dizimar && !f.id) {
-      // Montado aqui para o lançamento funcionar mesmo sem internet
-      const dz = dizimoDe(dados.valor);
-      dados.separacao = { id: uid(), dataHora: dados.dataHora, tipo: 'Saída', valor: r2(dz * 2), categoria: CAT_DIZIMO,
-        pagamento: 'Pix', descricao: 'Dízimo e oferta · ' + (dados.descricao || dados.categoria), origemId: dados.id };
-    }
+    // Dízimo e oferta montados aqui para o lançamento funcionar mesmo sem internet
+    const montarSeps = antes => [['Dízimo', dizimoDe(dados.valor)], ['Oferta', r2(ofertaDe(f))]]
+      .filter(([, v]) => v > 0)
+      .map(([parte, v]) => ({ id: ((antes || []).find(x => x.parte === parte) || {}).id || uid(), dataHora: dados.dataHora, tipo: 'Saída',
+        valor: v, categoria: CAT_DIZIMO, pagamento: 'Pix', descricao: parte + ' · ' + (dados.descricao || dados.categoria),
+        origemId: dados.id, parte }));
+    if (dizimar && !f.id) dados.separacoes = montarSeps();
 
     if (!f.id) {
       enfileirar({ acao: 'addLancamento', dados });
       avisar(f.tipo === 'Saída' ? `Saída de ${fmt(dados.valor)} registrada`
-        : `Entrada de ${fmt(dados.valor)} registrada${dados.separacao ? ` · ${fmt(dados.separacao.valor)} reservado para a igreja` : ''}`);
+        : `Entrada de ${fmt(dados.valor)} registrada${dados.separacoes ? ` · ${fmt(dados.separacoes.reduce((s, x) => s + x.valor, 0))} separado para a igreja` : ''}`);
       S.form = null; S.view = 'painel'; S.mes = dados.dataHora.slice(0, 7);
       render(); window.scrollTo(0, 0);
       processarFila();
@@ -1101,17 +1130,13 @@ const ACOES = {
     }
     const pend = S.fila.find(x => x.acao === 'addLancamento' && x.dados.id === f.id);
     if (pend) {
-      if (dizimar) {
-        const dz = dizimoDe(dados.valor), antes = pend.dados.separacao;
-        dados.separacao = { id: antes ? antes.id : uid(), dataHora: dados.dataHora, tipo: 'Saída', valor: r2(dz * 2), categoria: CAT_DIZIMO,
-          pagamento: 'Pix', descricao: 'Dízimo e oferta · ' + (dados.descricao || dados.categoria), origemId: dados.id };
-      }
+      if (dizimar) dados.separacoes = montarSeps(pend.dados.separacoes);
       pend.dados = dados; salvarFila();
       avisar('Lançamento atualizado');
       S.form = null; S.view = 'historico'; render(); processarFila();
       return;
     }
-    if (comDizimo || f.sepId) dados.dizimar = dizimar;
+    if (comDizimo || f.temSep) { dados.dizimar = dizimar; dados.oferta = r2(ofertaDe(f)); }
     if (await executar('editLancamento', dados, 'Lançamento atualizado')) { S.form = null; S.view = 'historico'; render(); }
   },
   async excluirLanc() {
@@ -1129,13 +1154,15 @@ const ACOES = {
       // Dízimo e oferta seguem a entrada: para mudar, edita-se a entrada
       const o = S.dados.lancamentos.find(x => String(x.id) === String(l.origemId));
       if (!o || l.envioId) { S.view = 'dizimos'; render(); window.scrollTo(0, 0); return avisar(l.envioId ? 'Este dízimo já foi enviado à igreja.' : 'A entrada deste dízimo não existe mais.'); }
-      avisar('O dízimo segue a entrada: edite a entrada para mudar.');
+      avisar('O dízimo e a oferta seguem a entrada: mude-os aqui.');
       l = o;
     }
-    const sep = S.dados.lancamentos.find(x => ehSeparacao(x) && String(x.origemId) === String(l.id));
+    const seps = S.dados.lancamentos.filter(x => ehSeparacao(x) && String(x.origemId) === String(l.id));
+    const oferta = seps.find(x => x.parte === 'Oferta');
     S.form = { id: l.id, tipo: l.tipo, centavos: Math.round(num(l.valor) * 100), categoria: l.categoria, catManual: true,
       pagamento: l.pagamento || 'Pix', descricao: l.descricao || '', dataHora: l.dataHora,
-      dizimar: l.tipo === 'Entrada' ? !!sep : null, sepId: sep ? sep.id : null, sepEnviada: !!(sep && sep.envioId) };
+      dizimar: l.tipo === 'Entrada' ? seps.length > 0 : null, temSep: seps.length > 0, sepEnviada: seps.some(x => x.envioId),
+      ofertaCentavos: oferta ? Math.round(num(oferta.valor) * 100) : 0, ofertaManual: seps.length > 0 };
     S.view = 'lancar';
     render(); window.scrollTo(0, 0);
   },
@@ -1277,6 +1304,7 @@ document.addEventListener('input', e => {
   }
   if (t.id === 'inDesc') sugerirCategoria(t.value);
   if (t.id === 'inSaldoNovo') atualizarDif();
+  if (t.id === 'inOferta' && S.form) { S.form.ofertaCentavos = +t.dataset.centavos || 0; S.form.ofertaManual = true; atualizarPrevDizimo(); }
 });
 
 document.addEventListener('keydown', e => {
