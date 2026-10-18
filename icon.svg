@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="42%" r="70%">
+      <stop offset="0" stop-color="#16295A"/>
+      <stop offset="1" stop-color="#081126"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#4A90D9" stop-opacity=".35"/>
+      <stop offset="1" stop-color="#4A90D9" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <circle cx="256" cy="268" r="210" fill="url(#glow)"/>
+  <g transform="rotate(-90 256 268)" fill="none" stroke-width="44" filter="url(#soft)">
+    <circle cx="256" cy="268" r="140" stroke="#7FB8F0" stroke-dasharray="263 617"/>
+    <circle cx="256" cy="268" r="140" stroke="#4A90D9" stroke-dasharray="207 673" stroke-dashoffset="-281"/>
+    <circle cx="256" cy="268" r="140" stroke="#BFE3FF" stroke-dasharray="187 693" stroke-dashoffset="-506"/>
+    <circle cx="256" cy="268" r="140" stroke="#2F6FB5" stroke-dasharray="151 729" stroke-dashoffset="-711"/>
+  </g>
+  <circle cx="256" cy="268" r="94" fill="none" stroke="#4A90D9" stroke-width="3" stroke-dasharray="6 9" opacity=".8"/>
+  <text x="256" y="292" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="68" fill="#FFFFFF" letter-spacing="2">HRM</text>
+  <g filter="url(#soft)">
+    <circle cx="398" cy="118" r="60" fill="#0B1630" stroke="#BFE3FF" stroke-width="7"/>
+    <circle cx="398" cy="118" r="45" fill="none" stroke="#BFE3FF" stroke-width="3.5" stroke-dasharray="9 7"/>
+    <text x="398" y="143" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="68" fill="#FFFFFF">$</text>
+  </g>
+</svg>
