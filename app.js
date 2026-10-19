@@ -2,7 +2,7 @@
 /* HRM Finance — app de controle financeiro pessoal
    Dados: Google Sheets (via Apps Script). Telas: este arquivo. */
 
-const VERSAO_APP = '1.2';
+const VERSAO_APP = '1.3';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -83,6 +83,7 @@ const S = {
   view: 'painel',
   mes: chaveMes(),
   filtro: 'todos',
+  ano: new Date().getFullYear(),
   form: null,
   status: 'ok',
   pinDig: '',
@@ -101,15 +102,21 @@ function normalizarBase(d) {
   if (!d) return null;
   return {
     lancamentos: d.lancamentos || [], categorias: d.categorias || [], cofrinhos: d.cofrinhos || [],
-    movimentos: d.movimentos || [], envios: d.envios || [], receber: d.receber || [], config: d.config || {}, versao: d.versao || 1
+    movimentos: d.movimentos || [], envios: d.envios || [], receber: d.receber || [],
+    compromissos: d.compromissos || [], config: d.config || {}, versao: d.versao || 1
   };
 }
 function mesclarFila(base) {
   if (!base) return null;
-  const d = { ...base, lancamentos: base.lancamentos.slice(), receber: base.receber.slice() };
+  const d = { ...base, lancamentos: base.lancamentos.slice(), receber: base.receber.slice(), compromissos: base.compromissos.slice() };
   const ids = new Set(d.lancamentos.map(l => String(l.id)));
   const idsRec = new Set(d.receber.map(r => String(r.id)));
   for (const f of S.fila) {
+    if (f.acao === 'pagarCompromisso') {
+      // Mostra já como pago enquanto o envio não sobe
+      d.compromissos = d.compromissos.map(c => String(c.id) === String(f.dados.id) ? compromissoPago(c, f.dados) : c);
+      continue;
+    }
     if (f.acao !== 'addLancamento') continue;
     if (!ids.has(String(f.dados.id))) d.lancamentos.push({ ...f.dados, _pendente: true });
     for (const sep of f.dados.separacoes || []) {
@@ -355,7 +362,8 @@ function render() {
 
   mostrarMolde(true);
   if (S.view === 'lancar' && !S.form) S.form = novoForm();
-  const views = { painel, historico, lancar, economias, ajustes, dizimos, receber: telaReceber };
+  const views = { painel, historico, lancar, economias, ajustes, dizimos, receber: telaReceber,
+    orcamento: telaOrcamento, ano: telaAno, compromissos: telaCompromissos };
   $('#tela').innerHTML = (views[S.view] || painel)();
   $$('#nav [data-view]').forEach(b => b.classList.toggle('ativo', b.dataset.view === S.view));
   atualizarSync();
@@ -503,6 +511,62 @@ function rosca(porCat, total) {
   </div>`;
 }
 
+/* ---------- orçamento ---------- */
+function orcamento() {
+  try { const o = JSON.parse(S.dados.config.orcamento || '{}'); return o && typeof o === 'object' ? o : {}; } catch { return {}; }
+}
+const catsOrcaveis = () => categorias('Saída').filter(c => c.nome !== CAT_DIZIMO);
+const corBarra = pct => pct > 100 ? 'var(--vermelho)' : pct >= 80 ? 'var(--dourado)' : 'var(--verde)';
+/* Parte do mês já passada (só para o mês atual), para a marca de ritmo */
+function ritmoDoMes(mes) {
+  if (mes !== chaveMes()) return mes < chaveMes() ? 1 : 0;
+  const h = new Date();
+  return h.getDate() / new Date(h.getFullYear(), h.getMonth() + 1, 0).getDate();
+}
+function resumoOrcamento(mes) {
+  const lim = orcamento();
+  const c = calcular(S.dados, mes);
+  const nomes = Object.keys(lim).filter(n => num(lim[n]) > 0);
+  const limite = r2(nomes.reduce((s, n) => s + num(lim[n]), 0));
+  const gasto = r2(nomes.reduce((s, n) => s + (c.porCat[n] || 0), 0));
+  return { lim, nomes, limite, gasto, porCat: c.porCat };
+}
+function barra(gasto, limite, ritmo) {
+  const pct = limite > 0 ? gasto / limite * 100 : 0;
+  return `<div class="barra-orc"><div style="width:${Math.min(100, pct).toFixed(1)}%;background:${corBarra(pct)}"></div>
+    ${ritmo > 0 && ritmo < 1 ? `<i style="left:${(ritmo * 100).toFixed(1)}%" title="Ritmo do mês"></i>` : ''}</div>`;
+}
+/* Depois de registrar um gasto: como ficou a categoria no orçamento */
+function avisoOrcamento(cat, mes) {
+  const lim = num(orcamento()[cat]);
+  if (!(lim > 0)) return '';
+  const g = calcular(S.dados, mes).porCat[cat] || 0;
+  return ` · ${cat}: ${fmt(g)} de ${fmt(lim)} (${Math.round(g / lim * 100)}%)`;
+}
+
+/* ---------- compromissos ---------- */
+const hojeIso = () => isoLocal().slice(0, 10);
+function proximoVencimento(venc, dia) {
+  const [a, m, dd] = String(venc).slice(0, 10).split('-').map(Number);
+  const d = +dia || dd;
+  const ultimo = new Date(a, m + 1, 0).getDate();
+  return isoLocal(new Date(a, m, Math.min(d, ultimo))).slice(0, 10);
+}
+function compromissoPago(c, p) {
+  return c.repete === 'Mensal'
+    ? { ...c, vencimento: proximoVencimento(c.vencimento, c.dia), pagoEm: p.dataHora, lancamentoId: p.lancamentoId, _pendente: true }
+    : { ...c, status: 'Pago', pagoEm: p.dataHora, lancamentoId: p.lancamentoId, _pendente: true };
+}
+const diasAte = iso => Math.round((new Date(iso + 'T12:00:00') - new Date(hojeIso() + 'T12:00:00')) / 864e5);
+function quandoVence(iso) {
+  const n = diasAte(iso);
+  if (n < 0) return n === -1 ? 'venceu ontem' : `venceu há ${-n} dias`;
+  if (n === 0) return 'vence hoje';
+  if (n === 1) return 'vence amanhã';
+  return n <= 7 ? `vence em ${n} dias` : 'vence em ' + dataCurta(iso + 'T12:00:00');
+}
+const abertos = () => S.dados.compromissos.filter(c => c.status !== 'Pago');
+
 /* ---------- PAINEL ---------- */
 function painel() {
   const d = S.dados;
@@ -536,6 +600,9 @@ function painel() {
   ${c.reservado > 0 ? `
   <button class="card guardado igreja" data-acao="abrirDizimos"><span>Reservado para a igreja</span><b class="num">${fmt(c.reservado)}</b></button>` : ''}
 
+  ${cardCompromissos()}
+  ${cardOrcamento()}
+
   ${primeiraVez ? `
   <div class="card dica">${icone.dica}<div><b>Primeiros passos</b><br>Toque no <b>+</b> para registrar um gasto ou uma entrada. Seus cofrinhos você cria na aba <b>Economias</b>.</div></div>` : ''}
 
@@ -544,6 +611,252 @@ function painel() {
 
   <div class="h2-linha"><h2>Últimos lançamentos</h2>${recentes.length ? '<button class="link-btn" data-view="historico">Ver tudo</button>' : ''}</div>
   <div class="lista">${recentes.length ? recentes.map(itemLanc).join('') : '<div class="card vazio">Nenhum lançamento ainda.</div>'}</div>`;
+}
+
+function cardOrcamento() {
+  const o = resumoOrcamento(S.mes);
+  if (!o.nomes.length) return `
+  <button class="card linha-btn atalho" data-acao="abrirOrcamento"><div><b>Orçamento</b><div class="muted pequeno">Defina quanto quer gastar por categoria</div></div><span class="muted">›</span></button>`;
+  const resta = r2(o.limite - o.gasto);
+  return `
+  <button class="card atalho orc-card" data-acao="abrirOrcamento">
+    <div class="linha-orc"><b>Orçamento de ${esc(nomeMes(S.mes, false))}</b><span class="num">${fmt(o.gasto)} de ${fmt(o.limite)}</span></div>
+    ${barra(o.gasto, o.limite, ritmoDoMes(S.mes))}
+    <div class="muted pequeno">${resta >= 0 ? `Restam ${fmt(resta)}` : `Passou ${fmt(-resta)} do limite`}</div>
+  </button>`;
+}
+
+function cardCompromissos() {
+  if (S.dados.versao < 4) return '';
+  const todos = abertos();
+  const lista = todos.filter(c => diasAte(c.vencimento) <= 7).sort((a, b) => a.vencimento.localeCompare(b.vencimento));
+  if (!lista.length) return `
+  <button class="card linha-btn atalho" data-acao="abrirCompromissos"><div><b>Compromissos</b><div class="muted pequeno">${todos.length
+    ? `${todos.length} em aberto, nenhum nos próximos 7 dias` : 'Registre contas e pagamentos que você não pode esquecer'}</div></div><span class="muted">›</span></button>`;
+  const atrasados = lista.filter(c => diasAte(c.vencimento) < 0).length;
+  const total = r2(lista.reduce((s, c) => s + num(c.valor), 0));
+  const prox = lista[0];
+  return `
+  <button class="card linha-btn atalho ${atrasados ? 'alerta' : ''}" data-acao="abrirCompromissos">
+    <div><b>${atrasados ? `${atrasados} compromisso${atrasados > 1 ? 's' : ''} atrasado${atrasados > 1 ? 's' : ''}` : `Compromissos nos próximos 7 dias`}</b>
+      <div class="muted pequeno">${esc(prox.descricao)} · ${quandoVence(prox.vencimento)}${lista.length > 1 ? ` · e mais ${lista.length - 1}` : ''}</div></div>
+    <b class="num">${fmt(total)}</b>
+  </button>`;
+}
+
+/* ---------- ORÇAMENTO ---------- */
+function telaOrcamento() {
+  const o = resumoOrcamento(S.mes);
+  const ant = calcular(S.dados, mudaMes(S.mes, -1)).porCat;
+  const ritmo = ritmoDoMes(S.mes);
+  const nomeAnt = nomeMes(mudaMes(S.mes, -1), false);
+  const comparar = (n, g) => {
+    const a = ant[n] || 0;
+    if (!a && !g) return '';
+    if (!a) return `nada em ${nomeAnt}`;
+    const v = Math.round((g - a) / a * 100);
+    return `${v > 0 ? '+' : ''}${v}% que ${nomeAnt}`;
+  };
+  const linhaCat = c => {
+    const n = c.nome, lim = num(o.lim[n]), g = r2(o.porCat[n] || 0);
+    if (!(lim > 0)) return '';
+    const pct = Math.round(g / lim * 100);
+    return `
+    <div class="orc-item">
+      <div class="linha-orc"><span><span class="bolinha" style="background:${c.cor}"></span>${esc(n)}</span><span class="num"><b>${fmt(g)}</b> de ${fmt(lim)}</span></div>
+      ${barra(g, lim, ritmo)}
+      <div class="linha-orc muted pequeno"><span>${g <= lim ? `Restam ${fmt(lim - g)}` : `<span class="neg">Passou ${fmt(g - lim)}</span>`} · ${pct}%</span><span>${esc(comparar(n, g))}</span></div>
+    </div>`;
+  };
+  const semLimite = catsOrcaveis().filter(c => !(num(o.lim[c.nome]) > 0) && (o.porCat[c.nome] || 0) > 0);
+  return `
+  <button class="voltar" data-view="painel">${icone.esq} Painel</button>
+  <h1>Orçamento</h1>
+  ${mesNav()}
+  ${o.nomes.length ? `
+  <section class="heroi">
+    <div class="rotulo">Gasto em ${esc(nomeMes(S.mes, false))}</div>
+    <div class="valor-grande num">${fmt(o.gasto)}</div>
+    <div class="muted pequeno" style="margin-bottom:10px">de ${fmt(o.limite)} planejados${ritmo > 0 && ritmo < 1 ? ` · pelo ritmo do mês, o esperado até hoje é ${fmt(o.limite * ritmo)}` : ''}</div>
+    ${barra(o.gasto, o.limite, ritmo)}
+  </section>
+  <div class="card orc-lista">${catsOrcaveis().map(linhaCat).join('')}</div>
+  <p class="muted pequeno">A marca na barra é o ritmo do mês: onde você estaria se gastasse por igual todos os dias. O que sobra não passa para o mês seguinte.</p>`
+  : `<div class="card vazio">Você ainda não definiu limites. Toque em "Definir limites" para começar.</div>`}
+  ${semLimite.length ? `
+  <h2>Sem limite definido</h2>
+  <div class="card bancos">${semLimite.map(c => `<div class="banco"><span><span class="bolinha" style="background:${c.cor}"></span>${esc(c.nome)}</span><b class="num">${fmt(o.porCat[c.nome])}</b></div>`).join('')}</div>` : ''}
+  <button class="btn" data-acao="editarOrcamento">${o.nomes.length ? 'Ajustar limites' : 'Definir limites'}</button>`;
+}
+
+function folhaOrcamento() {
+  const lim = orcamento();
+  const ant = calcular(S.dados, mudaMes(chaveMes(), -1)).porCat;
+  abrirFolha(`
+    <h3>Limites por mês</h3>
+    <p class="muted pequeno">Valem para todos os meses até você mudar. Deixe em branco a categoria que não quer limitar. Dízimos e ofertas ficam fora do orçamento.</p>
+    ${catsOrcaveis().map(c => {
+      const v = Math.round(num(lim[c.nome]) * 100);
+      return `
+    <div class="orc-campo">
+      <label for="lim-${esc(c.nome)}"><span class="bolinha" style="background:${c.cor}"></span>${esc(c.nome)}
+        ${ant[c.nome] ? `<div class="muted pequeno">mês passado: ${fmt(ant[c.nome])}</div>` : ''}</label>
+      <input id="lim-${esc(c.nome)}" class="campo" data-limite="${esc(c.nome)}" data-dinheiro inputmode="numeric" autocomplete="off"
+        placeholder="Sem limite" data-centavos="${v}" value="${v ? fmt(v / 100) : ''}">
+    </div>`;
+    }).join('')}
+    <button class="btn" data-acao="salvarOrcamento">Salvar limites</button>
+    <button class="btn secundario" data-acao="fecharFolha">Cancelar</button>`);
+}
+
+/* ---------- RELATÓRIO ANUAL ---------- */
+function telaAno() {
+  const d = S.dados, ano = S.ano;
+  const rec = receberPorLanc(d);
+  const meses = Array.from({ length: 12 }, (_, i) => `${ano}-${pad(i + 1)}`);
+  const ateMes = ano === new Date().getFullYear() ? new Date().getMonth() + 1 : 12;
+  const porMes = meses.map(m => ({ m, ent: 0, sai: 0 }));
+  const porCat = {}, porCatEnt = {};
+  for (const l of d.lancamentos) {
+    if (String(l.dataHora).slice(0, 4) !== String(ano)) continue;
+    const i = +String(l.dataHora).slice(5, 7) - 1;
+    if (l.tipo === 'Entrada') { porMes[i].ent += num(l.valor); porCatEnt[l.categoria] = (porCatEnt[l.categoria] || 0) + num(l.valor); }
+    else { const v = Math.max(gastoLiquido(l, rec), 0); porMes[i].sai += v; porCat[l.categoria] = (porCat[l.categoria] || 0) + v; }
+  }
+  let guardado = 0;
+  for (const m of d.movimentos) {
+    if (String(m.dataHora).slice(0, 4) !== String(ano)) continue;
+    if (m.tipo === 'Guardar') guardado += num(m.valor); else if (m.tipo === 'Resgatar') guardado -= num(m.valor);
+  }
+  const ent = r2(porMes.reduce((s, x) => s + x.ent, 0)), sai = r2(porMes.reduce((s, x) => s + x.sai, 0));
+  const usados = porMes.filter(x => x.ent || x.sai).length || 1;
+  const cats = Object.entries(porCat).sort((a, b) => b[1] - a[1]);
+  const primeiro = Math.max(0, porMes.findIndex(x => x.ent || x.sai));
+  const maxMes = Math.max(1, ...porMes.map(x => Math.max(x.ent, x.sai)));
+  const anos = [...new Set(d.lancamentos.map(l => +String(l.dataHora).slice(0, 4)).filter(Boolean).concat([new Date().getFullYear()]))].sort();
+  return `
+  <button class="voltar" data-view="historico">${icone.esq} Histórico</button>
+  <h1>Relatório de ${ano}</h1>
+  <div class="mes-nav">
+    <button data-acao="ano" data-delta="-1" aria-label="Ano anterior" ${ano <= anos[0] ? 'disabled' : ''}>${icone.esq}</button>
+    <strong>${ano}</strong>
+    <button data-acao="ano" data-delta="1" aria-label="Próximo ano" ${ano >= new Date().getFullYear() ? 'disabled' : ''}>${icone.dir}</button>
+  </div>
+  <section class="heroi">
+    <div class="rotulo">Saldo do ano</div>
+    <div class="valor-grande num ${ent - sai >= 0 ? '' : 'neg'}">${sinal(r2(ent - sai))}</div>
+    <div class="rodape">
+      <div class="mes-saldo"><span>Entradas</span><b class="num pos">${fmt(ent)}</b></div>
+      <div class="mes-saldo" style="text-align:right"><span>Saídas</span><b class="num">${fmt(sai)}</b></div>
+    </div>
+  </section>
+  <div class="duplo">
+    <div class="card mini"><div class="rotulo">Gasto médio por mês</div><div class="v num">${fmt(sai / usados)}</div></div>
+    <div class="card mini"><div class="rotulo">Guardado no ano</div><div class="v num">${sinal(r2(guardado))}</div></div>
+  </div>
+
+  <h2>Mês a mês</h2>
+  <div class="card meses">
+    ${porMes.map((x, i) => (i >= ateMes || i < primeiro) && !x.ent && !x.sai ? '' : `
+    <div class="mes-linha">
+      <span class="mes-nome">${esc(maiuscula(nomeMes(x.m, false)).slice(0, 3))}</span>
+      <span class="barras"><i class="b-ent" style="width:${(x.ent / maxMes * 100).toFixed(1)}%"></i><i class="b-sai" style="width:${(x.sai / maxMes * 100).toFixed(1)}%"></i></span>
+      <span class="num mes-saldo-v ${x.ent - x.sai >= 0 ? 'pos' : 'neg'}">${sinal(r2(x.ent - x.sai))}</span>
+    </div>`).join('')}
+    <div class="legenda-meses muted pequeno"><span><i class="b-ent"></i>Entradas</span><span><i class="b-sai"></i>Saídas</span></div>
+  </div>
+
+  <h2>Gastos por categoria</h2>
+  <div class="card orc-lista">${cats.length ? cats.map(([n, v]) => {
+    return `
+    <div class="orc-item">
+      <div class="linha-orc"><span><span class="bolinha" style="background:${corCat('Saída', n)}"></span>${esc(n)}</span><span class="num"><b>${fmt(v)}</b></span></div>
+      <div class="muted pequeno">${Math.round(v / (sai || 1) * 100)}% das saídas · média de ${fmt(v / usados)} por mês</div>
+    </div>`;
+  }).join('') : '<div class="vazio">Nenhuma saída neste ano.</div>'}</div>
+
+  ${Object.keys(porCatEnt).length ? `
+  <h2>Entradas por categoria</h2>
+  <div class="card bancos">${Object.entries(porCatEnt).sort((a, b) => b[1] - a[1]).map(([n, v]) =>
+    `<div class="banco"><span><span class="bolinha" style="background:${corCat('Entrada', n)}"></span>${esc(n)}</span><b class="num">${fmt(v)}</b></div>`).join('')}</div>` : ''}`;
+}
+
+/* ---------- COMPROMISSOS ---------- */
+function telaCompromissos() {
+  const d = S.dados;
+  if (d.versao < 4) return `
+  <button class="voltar" data-view="painel">${icone.esq} Painel</button>
+  <h1>Compromissos</h1>
+  <div class="card dica">${icone.dica}<div><b>Atualize o código da planilha</b><br>Para usar esta parte, cole o novo <b>apps-script/Codigo.gs</b> no Apps Script e publique uma nova versão (veja "Manutenção" no README).</div></div>`;
+  const ab = abertos().sort((a, b) => a.vencimento.localeCompare(b.vencimento));
+  const atrasados = ab.filter(c => diasAte(c.vencimento) < 0);
+  const semana = ab.filter(c => diasAte(c.vencimento) >= 0 && diasAte(c.vencimento) <= 7);
+  const depois = ab.filter(c => diasAte(c.vencimento) > 7);
+  const fimMes = isoLocal(new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0)).slice(0, 10);
+  const noMes = ab.filter(c => c.vencimento <= fimMes);
+  const totMes = r2(noMes.reduce((s, c) => s + num(c.valor), 0));
+  const carteira = calcular(d, chaveMes()).carteira;
+  const pagos = d.compromissos.filter(c => c.pagoEm).sort((a, b) => String(b.pagoEm).localeCompare(String(a.pagoEm))).slice(0, 10);
+  const item = c => `
+    <button class="item" data-acao="menuCompromisso" data-id="${esc(c.id)}">
+      <span class="ico" style="background:${corCat('Saída', c.categoria)}26;color:${corCat('Saída', c.categoria)}">${esc(dataCurta(c.vencimento + 'T12:00:00').slice(0, 2))}</span>
+      <span class="meio">
+        <div class="t1">${esc(c.descricao)}${c._pendente ? '<span class="tag-pend">enviando</span>' : ''}</div>
+        <div class="t2">${[quandoVence(c.vencimento), c.categoria, c.repete === 'Mensal' ? 'todo mês' : ''].filter(Boolean).map(esc).join(' · ')}</div>
+      </span>
+      <span class="val num ${diasAte(c.vencimento) < 0 ? 'neg' : ''}">${c.valor ? fmt(c.valor) : '—'}</span></button>`;
+  const bloco = (titulo, l) => l.length ? `<h2>${titulo}</h2><div class="lista">${l.map(item).join('')}</div>` : '';
+  return `
+  <button class="voltar" data-view="painel">${icone.esq} Painel</button>
+  <h1>Compromissos</h1>
+  <section class="heroi">
+    <div class="rotulo">A pagar até o fim de ${esc(nomeMes(chaveMes(), false))}</div>
+    <div class="valor-grande num">${fmt(totMes)}</div>
+    <div class="rodape">
+      <div class="mes-saldo"><span>Na carteira</span><b class="num">${fmt(carteira)}</b></div>
+      <div class="mes-saldo" style="text-align:right"><span>Depois de pagar</span><b class="num ${carteira - totMes < 0 ? 'neg' : ''}">${fmt(r2(carteira - totMes))}</b></div>
+    </div>
+  </section>
+  <button class="btn" data-acao="novoCompromisso">+ Novo compromisso</button>
+  ${bloco('<span class="neg">Atrasados</span>', atrasados)}
+  ${bloco('Próximos 7 dias', semana)}
+  ${bloco('Mais adiante', depois)}
+  ${!ab.length ? '<div class="card vazio" style="margin-top:14px">Nenhum compromisso. Registre contas e pagamentos que você precisa lembrar de fazer.</div>' : ''}
+  ${pagos.length ? `<h2>Pagos recentemente</h2><div class="lista">${pagos.map(c => `
+    <div class="item"><span class="meio"><div class="t1">${esc(c.descricao)}</div><div class="t2">pago em ${dataCurta(c.pagoEm)}${c.repete === 'Mensal' ? ' · próximo ' + dataCurta(c.vencimento + 'T12:00:00') : ''}</div></span></div>`).join('')}</div>` : ''}`;
+}
+
+function folhaCompromisso(id) {
+  const c = id ? S.dados.compromissos.find(x => String(x.id) === String(id)) : null;
+  const v = c ? Math.round(num(c.valor) * 100) : 0;
+  const cat = c ? c.categoria : '';
+  abrirFolha(`
+    <h3>${c ? 'Editar compromisso' : 'Novo compromisso'}</h3>
+    <label class="rotulo-campo" for="inCompDesc">O que é</label>
+    <input id="inCompDesc" class="campo" placeholder="Ex.: inscrição do congresso, conta de luz" value="${esc(c ? c.descricao : '')}" autocomplete="off">
+    <label class="rotulo-campo" for="inCompValor">Valor <span class="muted">(opcional)</span></label>
+    <input id="inCompValor" class="campo" data-dinheiro inputmode="numeric" placeholder="R$ 0,00" autocomplete="off" data-centavos="${v}" value="${v ? fmt(v / 100) : ''}">
+    <label class="rotulo-campo" for="inCompData">Vencimento</label>
+    <input id="inCompData" class="campo" type="date" value="${c ? c.vencimento : ''}">
+    <span class="rotulo-campo">Categoria <span class="muted">(opcional)</span></span>
+    <div class="chips" id="compCats">${categorias('Saída').map(x => `<button class="chip pequeno ${cat === x.nome ? 'on' : ''}" data-acao="compCat" data-nome="${esc(x.nome)}"><span class="bolinha" style="background:${x.cor}"></span>${esc(x.nome)}</button>`).join('')}</div>
+    <div class="ajuste-item" style="border:0">
+      <div><b>Repete todo mês</b><div class="muted pequeno">Depois de pago, volta no mesmo dia do mês seguinte</div></div>
+      <button class="interruptor ${c && c.repete === 'Mensal' ? 'on' : ''}" id="compMensal" data-acao="compMensal" aria-label="Repete todo mês"></button>
+    </div>
+    <button class="btn" data-acao="salvarCompromisso" data-id="${esc(c ? c.id : '')}">${c ? 'Salvar' : 'Criar compromisso'}</button>
+    <button class="btn secundario" data-acao="fecharFolha">Cancelar</button>`, () => { if (!c) $('#inCompDesc').focus(); });
+}
+
+function folhaMenuCompromisso(id) {
+  const c = S.dados.compromissos.find(x => String(x.id) === String(id)); if (!c) return;
+  abrirFolha(`
+    <h3>${esc(c.descricao)}</h3>
+    <p class="muted pequeno" style="margin:0 0 6px">${[c.valor ? fmt(c.valor) : '', quandoVence(c.vencimento), c.repete === 'Mensal' ? 'todo mês' : ''].filter(Boolean).join(' · ')}</p>
+    <button class="menu-op" data-acao="pagarCompromisso" data-id="${esc(id)}">${icone.desce} Paguei: registrar a saída</button>
+    <button class="menu-op" data-acao="editarCompromisso" data-id="${esc(id)}">${icone.lapis} Editar</button>
+    <button class="menu-op perigo" data-acao="excluirCompromisso" data-id="${esc(id)}">${icone.lixo} Excluir</button>
+    <button class="btn secundario" data-acao="fecharFolha">Fechar</button>`);
 }
 
 /* ---------- HISTÓRICO ---------- */
@@ -571,7 +884,7 @@ function historico() {
   }
 
   return `
-  <h1>Histórico</h1>
+  <div class="h2-linha"><h1>Histórico</h1><button class="link-btn" data-acao="abrirAno">Relatório anual ›</button></div>
   ${mesNav()}
   <div class="filtros">
     ${chip('todos', 'Todos')}${chip('tipo:Saída', 'Saídas')}${chip('tipo:Entrada', 'Entradas')}
@@ -1352,7 +1665,8 @@ const ACOES = {
 
     if (!f.id) {
       enfileirar({ acao: 'addLancamento', dados });
-      avisar(f.tipo === 'Saída' ? `Saída de ${fmt(dados.valor)} registrada${dados.receber ? ` · ${fmt(dados.receber.reduce((s, r) => s + r.valor, 0))} a receber` : ''}`
+      if (f.compromissoId) enfileirar({ acao: 'pagarCompromisso', dados: { id: f.compromissoId, lancamentoId: dados.id, dataHora: dados.dataHora } });
+      avisar(f.tipo === 'Saída' ? `Saída de ${fmt(dados.valor)} registrada${dados.receber ? ` · ${fmt(dados.receber.reduce((s, r) => s + r.valor, 0))} a receber` : ''}${avisoOrcamento(dados.categoria, dados.dataHora.slice(0, 7))}`
         : `Entrada de ${fmt(dados.valor)} registrada${dados.separacoes ? ` · ${fmt(dados.separacoes.reduce((s, x) => s + x.valor, 0))} separado para a igreja` : ''}`);
       S.form = null; S.view = 'painel'; S.mes = dados.dataHora.slice(0, 7);
       render(); window.scrollTo(0, 0);
@@ -1408,6 +1722,44 @@ const ACOES = {
   abrirDizimos() { irPara('dizimos'); },
   composicao() { folhaComposicao(); },
   abrirReceber() { irPara('receber'); },
+  abrirOrcamento() { irPara('orcamento'); },
+  abrirAno() { S.ano = +S.mes.slice(0, 4); irPara('ano'); },
+  abrirCompromissos() { irPara('compromissos'); },
+  ano(el) { S.ano += +el.dataset.delta; render(); },
+  editarOrcamento() { folhaOrcamento(); },
+  async salvarOrcamento() {
+    const lim = {};
+    $$('[data-limite]').forEach(i => { const c = +i.dataset.centavos || 0; if (c) lim[i.dataset.limite] = c / 100; });
+    if (await executar('setConfig', { chave: 'orcamento', valor: JSON.stringify(lim) }, 'Limites salvos')) { fecharFolha(); render(); }
+  },
+  novoCompromisso() { folhaCompromisso(null); },
+  editarCompromisso(el) { folhaCompromisso(el.dataset.id); },
+  menuCompromisso(el) { folhaMenuCompromisso(el.dataset.id); },
+  compCat(el) { const on = !el.classList.contains('on'); $$('#compCats .chip').forEach(b => b.classList.remove('on')); el.classList.toggle('on', on); },
+  compMensal(el) { el.classList.toggle('on'); },
+  async salvarCompromisso(el) {
+    const id = el.dataset.id;
+    const dados = {
+      id: id || uid(), descricao: $('#inCompDesc').value.trim(), valor: centavosDe($('#inCompValor')) / 100,
+      vencimento: $('#inCompData').value, categoria: ($('#compCats .chip.on') || { dataset: {} }).dataset.nome || '',
+      repete: $('#compMensal').classList.contains('on') ? 'Mensal' : 'Não'
+    };
+    if (!dados.descricao) return avisar('Descreva o compromisso.', true);
+    if (!dados.vencimento) return avisar('Informe a data do vencimento.', true);
+    if (await executar(id ? 'editCompromisso' : 'addCompromisso', dados, id ? 'Compromisso atualizado' : 'Compromisso criado')) { fecharFolha(); render(); }
+  },
+  async excluirCompromisso(el) {
+    if (!confirm('Excluir este compromisso?')) return;
+    if (await executar('delCompromisso', { id: el.dataset.id }, 'Compromisso excluído')) { fecharFolha(); render(); }
+  },
+  pagarCompromisso(el) {
+    const c = S.dados.compromissos.find(x => String(x.id) === String(el.dataset.id)); if (!c) return;
+    fecharFolha();
+    S.form = { ...novoForm(), centavos: Math.round(num(c.valor) * 100), descricao: c.descricao,
+      categoria: c.categoria || null, catManual: !!c.categoria, compromissoId: c.id };
+    S.view = 'lancar'; render(); window.scrollTo(0, 0);
+    avisar('Confira o valor e registre a saída.');
+  },
   ligarReceber() {
     const rc = S.form.receber;
     rc.modo = rc.modo === 'nao' ? 'escolher' : 'nao';

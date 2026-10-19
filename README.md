@@ -88,6 +88,11 @@ App pessoal de controle financeiro do Henrique: registro imediato de entradas e 
 | Dividir um gasto com outras pessoas | Na saída, ligue **Receber de volta → Valor dividido** |
 | Marcar nota enviada ou valor recebido | **Painel → A receber** → toque no item |
 | Ver de que é feito o saldo total | **Painel → Saldo total** |
+| Definir quanto posso gastar por categoria | **Painel → Orçamento → Definir limites** |
+| Ver como está o orçamento do mês | **Painel → Orçamento** |
+| Ver o resumo do ano | **Histórico → Relatório anual** |
+| Registrar uma conta ou pagamento futuro | **Painel → Compromissos → Novo compromisso** |
+| Marcar um compromisso como pago | **Compromissos** → toque no item → **Paguei** (abre a saída já preenchida) |
 
 **Regras do app**
 - Guardar e resgatar **não** contam como saída nem entrada: só mudam o dinheiro de lugar.
@@ -95,15 +100,17 @@ App pessoal de controle financeiro do Henrique: registro imediato de entradas e 
 - Sem internet? Registre normalmente: o lançamento fica marcado como "enviando" e sobe sozinho quando a conexão voltar. A bolinha no topo mostra o estado: verde (em dia), amarela (enviando), vermelha (sem conexão).
 - Dízimo é 10% da entrada, arredondado para cima no centavo, e a oferta (opcional) vem sugerida igual ao dízimo, mas você pode mudar. O valor sai da carteira na hora (conta como gasto em **Dízimos e ofertas**) e fica reservado, fora do saldo total, até você marcar o envio à igreja. Para mudar a oferta, edite a entrada. O dízimo e a oferta usam o mesmo número de registro (Nº) da entrada de onde vieram.
 - O que você vai receber de volta (reembolso da igreja ou parte de outras pessoas) sai da carteira quando você paga, mas não conta como seu gasto: fica em **A receber** e entra no saldo total. Quando receber, o valor volta para a carteira.
+- O orçamento é um limite por categoria que vale para todos os meses até você mudar. O que sobra num mês não passa para o seguinte. Dízimos e ofertas ficam fora do orçamento.
+- Um compromisso só vira gasto quando você toca em **Paguei** e registra a saída. Se ele repete todo mês, volta sozinho para o mesmo dia do mês seguinte.
 - Ao descrever um gasto ("mercado", "uber"…), o app sugere a categoria e aprende com o que você já registrou.
 
 ---
 
 ## Manutenção
 
-**Trocar o PIN:** edite a linha `const PIN` no Apps Script, salve e faça **Implantar → Gerenciar implantações → ✏️ (editar) → Versão: Nova versão → Implantar**. O link continua o mesmo. Depois, no app, entre com o novo PIN.
+**Trocar o PIN:** edite a linha `const PIN` **só no Apps Script**, nunca aqui no GitHub (este repositório é público e qualquer pessoa veria o PIN). Aqui ele fica sempre `0000`. No Apps Script, salve e faça **Implantar → Gerenciar implantações → ✏️ (editar) → Versão: Nova versão → Implantar**. O link continua o mesmo. Depois, no app, entre com o novo PIN.
 
-**Atualizar o código da planilha:** mesmo caminho acima (colar o novo código, salvar, nova versão da implantação).
+**Atualizar o código da planilha:** mesmo caminho acima (colar o novo código, salvar, nova versão da implantação). Antes de salvar, troque o `0000` da linha `const PIN` pelo seu PIN de verdade.
 
 **Atualizar as telas do app:** basta atualizar os arquivos neste repositório; o GitHub Pages publica sozinho e o app se atualiza ao abrir.
 

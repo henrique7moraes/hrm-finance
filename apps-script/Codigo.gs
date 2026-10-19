@@ -6,7 +6,7 @@
  * 3. Implante como "App da Web" (Executar como: Eu | Quem pode acessar: Qualquer pessoa).
  */
 const PIN = '0000';
-const VERSAO = 3;
+const VERSAO = 4;
 const CAT_DIZIMO = 'Dízimos e ofertas';
 
 const ABAS = {
@@ -16,6 +16,7 @@ const ABAS = {
   MovCofrinhos: ['id', 'dataHora', 'cofrinhoId', 'tipo', 'valor', 'obs'],
   EnviosIgreja: ['id', 'dataHora', 'dizimo', 'oferta', 'obs'],
   AReceber:     ['id', 'dataHora', 'lancamentoId', 'registro', 'devedor', 'valor', 'status', 'atualizadoEm', 'obs'],
+  Compromissos: ['id', 'descricao', 'valor', 'vencimento', 'dia', 'categoria', 'repete', 'status', 'pagoEm', 'lancamentoId', 'criadoEm'],
   Config:       ['chave', 'valor']
 };
 
@@ -110,6 +111,45 @@ function executar_(acao, d) {
       separacoesDe_(d.id).filter(s => !s.envioId).forEach(s => remover_('Lancamentos', s.id));
       receberDe_(d.id).forEach(r => remover_('AReceber', r.id));
       return;
+
+    case 'addCompromisso': {
+      const desc = String(d.descricao || '').trim();
+      if (!desc) throw new Error('Descreva o compromisso.');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(d.vencimento))) throw new Error('Informe a data do vencimento.');
+      if (acharLinha_('Compromissos', d.id)) return;
+      anexar_('Compromissos', {
+        id: d.id || novoId_(), descricao: desc, valor: num_(d.valor), vencimento: d.vencimento,
+        dia: Number(String(d.vencimento).slice(8, 10)), categoria: d.categoria || '', repete: d.repete === 'Mensal' ? 'Mensal' : 'Não',
+        status: 'Aberto', pagoEm: '', lancamentoId: '', criadoEm: agora_()
+      });
+      return;
+    }
+
+    case 'editCompromisso': {
+      const desc = String(d.descricao || '').trim();
+      if (!desc) throw new Error('Descreva o compromisso.');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(d.vencimento))) throw new Error('Informe a data do vencimento.');
+      atualizar_('Compromissos', d.id, {
+        descricao: desc, valor: num_(d.valor), vencimento: d.vencimento, dia: Number(String(d.vencimento).slice(8, 10)),
+        categoria: d.categoria || '', repete: d.repete === 'Mensal' ? 'Mensal' : 'Não'
+      });
+      return;
+    }
+
+    case 'delCompromisso':
+      remover_('Compromissos', d.id);
+      return;
+
+    case 'pagarCompromisso': {
+      const c = ler_('Compromissos').filter(x => String(x.id) === String(d.id))[0];
+      if (!c) throw new Error('Compromisso não encontrado.');
+      const pago = { pagoEm: d.dataHora || agora_(), lancamentoId: d.lancamentoId || '' };
+      // Mensal: passa para o mesmo dia do mês seguinte. Único: fica marcado como pago.
+      if (c.repete === 'Mensal') pago.vencimento = proximoVencimento_(c.vencimento, c.dia);
+      else pago.status = 'Pago';
+      atualizar_('Compromissos', d.id, pago);
+      return;
+    }
 
     case 'statusReceber': {
       if (['Pendente', 'Nota enviada', 'Recebido'].indexOf(d.status) < 0) throw new Error('Situação inválida.');
@@ -220,6 +260,7 @@ function preparar_() {
       sh.setFrozenRows(1);
       if (['Lancamentos', 'MovCofrinhos', 'EnviosIgreja', 'AReceber'].indexOf(nome) >= 0) sh.getRange('B:B').setNumberFormat('@');
       if (nome === 'AReceber') sh.getRange('H:H').setNumberFormat('@');
+      if (nome === 'Compromissos') { sh.getRange('D:D').setNumberFormat('@'); sh.getRange('I:I').setNumberFormat('@'); sh.getRange('K:K').setNumberFormat('@'); }
       if (nome === 'Cofrinhos') sh.getRange('E:E').setNumberFormat('@');
       if (nome === 'Categorias') sh.getRange(2, 1, CATEGORIAS_PADRAO.length, 3).setValues(CATEGORIAS_PADRAO);
     } else {
@@ -245,6 +286,7 @@ function carregar_() {
     movimentos: ler_('MovCofrinhos').map(r => ({ ...r, valor: num_(r.valor) })),
     envios: ler_('EnviosIgreja').map(r => ({ ...r, dizimo: num_(r.dizimo), oferta: num_(r.oferta) })),
     receber: ler_('AReceber').map(r => ({ ...r, valor: num_(r.valor) })),
+    compromissos: ler_('Compromissos').map(r => ({ ...r, valor: num_(r.valor), vencimento: String(r.vencimento).slice(0, 10) })),
     config: cfg,
     versao: VERSAO
   };
@@ -374,6 +416,17 @@ function gravarReceber_(saida, lista) {
       devedor: devedor, valor: num_(r.valor), status: r.status || 'Pendente', atualizadoEm: '', obs: ''
     });
   });
+}
+
+/* ---------- compromissos ---------- */
+
+/** Mesmo dia no mês seguinte; em meses mais curtos, o último dia do mês. */
+function proximoVencimento_(venc, dia) {
+  const p = String(venc).slice(0, 10).split('-').map(Number);
+  const d = Number(dia) || p[2];
+  const ultimo = new Date(p[0], p[1] + 1, 0).getDate();
+  const nova = new Date(p[0], p[1], Math.min(d, ultimo));
+  return Utilities.formatDate(nova, Session.getScriptTimeZone(), 'yyyy-MM-dd');
 }
 
 /* ---------- utilidades ---------- */
