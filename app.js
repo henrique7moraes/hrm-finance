@@ -2,7 +2,7 @@
 /* HRM Finance — app de controle financeiro pessoal
    Dados: Google Sheets (via Apps Script). Telas: este arquivo. */
 
-const VERSAO_APP = '2.0';
+const VERSAO_APP = '2.1';
 const NOME = 'Henrique';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
@@ -672,7 +672,6 @@ function telaOrcamento() {
 function orcGastos() {
   const o = resumoOrcamento(S.mes);
   const ritmo = ritmoDoMes(S.mes);
-  const semLimite = r2(Object.entries(o.porCat).filter(([n]) => n !== CAT_DIZIMO && !o.nomes.includes(n)).reduce((s, [, v]) => s + v, 0));
   const seta = '<svg class="seta" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>';
   const linha = c => {
     const n = c.nome, lim = num(o.lim[n]), g = r2(o.porCat[n] || 0);
@@ -687,28 +686,15 @@ function orcGastos() {
   };
   const temDizimo = categorias('Saída').some(c => c.nome === CAT_DIZIMO);
   const dz = r2(o.porCat[CAT_DIZIMO] || 0);
-  const heroi = o.nomes.length ? `
-  <section class="heroi">
-    <div class="linha-orc"><span class="rotulo">Gasto no mês</span><span class="rotulo">limite ${fmt(o.limite)}</span></div>
-    <div class="valor-grande num">${fmt(o.gasto)}</div>
-    ${barra(o.gasto, o.limite, ritmo)}
-    <div class="pequeno" style="opacity:.9">${o.gasto <= o.limite ? `${fmt(r2(o.limite - o.gasto))} livres` : `Passou ${fmt(r2(o.gasto - o.limite))} do limite`}${ritmo > 0 && ritmo < 1 ? ` · a marquinha amarela é o ritmo do mês (dia ${new Date().getDate()})` : ''}</div>
-    ${semLimite > 0 ? `<div class="pequeno" style="opacity:.9;margin-top:4px">Mais ${fmt(semLimite)} em categorias sem limite</div>` : ''}
-  </section>` : `
-  <section class="heroi">
-    <div class="rotulo">Gasto no mês</div>
-    <div class="valor-grande num">${fmt(semLimite)}</div>
-    <div class="pequeno" style="opacity:.9">Toque numa categoria para definir quanto quer gastar por mês.</div>
-  </section>`;
   return `
-  ${heroi}
-  <div class="card orc-lista" style="margin-top:12px">
+  ${o.nomes.length ? '' : '<p class="nota" style="margin-top:0">Toque numa categoria para definir quanto quer gastar por mês.</p>'}
+  <div class="card orc-lista">
     ${catsOrcaveis().map(linha).join('')}
     ${temDizimo ? `
     <div class="orc-item fora"><div class="topo-i"><span class="bolinha" style="background:${corCat('Saída', CAT_DIZIMO)}"></span><span style="flex:1;font-size:14px">${CAT_DIZIMO}</span><span class="pequeno">${dz ? fmt(dz) + ' · ' : ''}fora do orçamento</span></div></div>` : ''}
   </div>
   <button class="btn tracejado" data-acao="novaCat" data-tipo="Saída">+ Nova categoria de gasto</button>
-  ${o.nomes.length ? '<p class="nota">Os limites valem para todos os meses até você mudar. O que sobra não passa para o mês seguinte. <button class="link-btn" data-acao="editarOrcamento">Editar todos os limites</button></p>' : ''}`;
+  ${o.nomes.length ? '<p class="nota">O tracinho na barra mostra o ritmo do mês. Os limites valem para todos os meses até você mudar. O que sobra não passa para o mês seguinte. <button class="link-btn" data-acao="editarOrcamento">Editar todos os limites</button></p>' : ''}`;
 }
 
 function orcEntradas() {
@@ -719,18 +705,9 @@ function orcEntradas() {
     return r;
   };
   const doMes = somaMes(S.mes);
-  const tot = r2(Object.values(doMes).reduce((s, v) => s + v, 0));
-  const ant = [1, 2, 3].map(i => Object.values(somaMes(mudaMes(S.mes, -i))).reduce((s, v) => s + v, 0));
-  const comDados = ant.filter(v => v > 0);
-  const media = comDados.length ? r2(comDados.reduce((s, v) => s + v, 0) / comDados.length) : 0;
   const seta = '<svg class="seta" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>';
   return `
-  <section class="heroi verde">
-    <div class="rotulo">Entrou no mês</div>
-    <div class="valor-grande num">${fmt(tot)}</div>
-    <div class="pequeno" style="opacity:.9">${media ? `média dos meses anteriores: ${fmt(media)}` : 'Sem entradas nos três meses anteriores'}</div>
-  </section>
-  <div class="card orc-lista" style="margin-top:12px">
+  <div class="card orc-lista">
     ${categorias('Entrada').map(c => `
     <button class="orc-item" data-acao="catEnt" data-nome="${esc(c.nome)}">
       <div class="topo-i"><span class="bolinha" style="background:${c.cor}"></span><b>${esc(c.nome)}</b><span class="info">${fmt(doMes[c.nome] || 0)}</span>${seta}</div>
