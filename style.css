@@ -314,3 +314,35 @@ input[type="datetime-local"].campo, input[type="date"].campo { color-scheme: dar
 .tag-st.env { color: var(--azul-claro); background: rgba(127, 184, 240, .14); }
 .tag-st.ok { color: var(--verde); background: rgba(76, 213, 150, .12); }
 .receber-caixa .linha { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+
+/* orçamento */
+.atalho { width: 100%; text-align: left; margin-top: 14px; }
+.atalho.alerta { border: 1px solid rgba(255, 122, 122, .45); }
+.atalho.alerta > div > b { color: var(--vermelho); }
+.orc-card { display: block; }
+.linha-orc { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.linha-orc > span:first-child { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.linha-orc .bolinha { flex: 0 0 auto; }
+.barra-orc { position: relative; height: 10px; border-radius: 6px; background: rgba(127, 184, 240, .12); margin: 8px 0 6px; overflow: visible; }
+.barra-orc > div { height: 100%; border-radius: 6px; transition: width .3s; }
+.barra-orc > i { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--texto); opacity: .7; border-radius: 1px; }
+.orc-lista { padding: 4px 14px; }
+.orc-item { padding: 12px 0; border-bottom: 1px solid var(--linha); }
+.orc-item:last-child { border-bottom: 0; }
+.orc-campo { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--linha); }
+.orc-campo label { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-weight: 600; min-width: 0; }
+.orc-campo label .muted { flex-basis: 100%; font-weight: 400; }
+.orc-campo .campo { flex: 0 0 130px; margin: 0; text-align: right; }
+
+/* relatório anual */
+.meses { padding: 10px 14px; }
+.mes-linha { display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 10px; padding: 5px 0; }
+.mes-nome { font-size: 13px; font-weight: 600; color: var(--suave); }
+.barras { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.barras i, .legenda-meses i { display: block; height: 6px; border-radius: 3px; min-width: 2px; }
+.b-ent { background: var(--verde); }
+.b-sai { background: var(--azul-forte); }
+.mes-saldo-v { font-size: 13px; min-width: 84px; text-align: right; }
+.legenda-meses { display: flex; gap: 16px; margin-top: 8px; }
+.legenda-meses span { display: inline-flex; align-items: center; gap: 6px; }
+.legenda-meses i { width: 14px; }
