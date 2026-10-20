@@ -1,31 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <defs>
-    <radialGradient id="bg" cx="50%" cy="42%" r="70%">
-      <stop offset="0" stop-color="#16295A"/>
-      <stop offset="1" stop-color="#081126"/>
-    </radialGradient>
-    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
-      <stop offset="0" stop-color="#4A90D9" stop-opacity=".35"/>
-      <stop offset="1" stop-color="#4A90D9" stop-opacity="0"/>
-    </radialGradient>
-    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
-      <feGaussianBlur stdDeviation="6" result="b"/>
-      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-    </filter>
-  </defs>
-  <rect width="512" height="512" fill="url(#bg)"/>
-  <circle cx="256" cy="268" r="210" fill="url(#glow)"/>
-  <g transform="rotate(-90 256 268)" fill="none" stroke-width="44" filter="url(#soft)">
-    <circle cx="256" cy="268" r="140" stroke="#7FB8F0" stroke-dasharray="263 617"/>
-    <circle cx="256" cy="268" r="140" stroke="#4A90D9" stroke-dasharray="207 673" stroke-dashoffset="-281"/>
-    <circle cx="256" cy="268" r="140" stroke="#BFE3FF" stroke-dasharray="187 693" stroke-dashoffset="-506"/>
-    <circle cx="256" cy="268" r="140" stroke="#2F6FB5" stroke-dasharray="151 729" stroke-dashoffset="-711"/>
-  </g>
-  <circle cx="256" cy="268" r="94" fill="none" stroke="#4A90D9" stroke-width="3" stroke-dasharray="6 9" opacity=".8"/>
-  <text x="256" y="292" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="68" fill="#FFFFFF" letter-spacing="2">HRM</text>
-  <g filter="url(#soft)">
-    <circle cx="398" cy="118" r="60" fill="#0B1630" stroke="#BFE3FF" stroke-width="7"/>
-    <circle cx="398" cy="118" r="45" fill="none" stroke="#BFE3FF" stroke-width="3.5" stroke-dasharray="9 7"/>
-    <text x="398" y="143" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="68" fill="#FFFFFF">$</text>
-  </g>
-</svg>
+<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><defs>
+  <linearGradient id='f' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='#0F4C5C'/><stop offset='1' stop-color='#052229'/></linearGradient>
+  <radialGradient id='luz' cx='.25' cy='.12' r='.9'><stop offset='0' stop-color='#5FB3C4' stop-opacity='.28'/><stop offset='.7' stop-color='#5FB3C4' stop-opacity='0'/></radialGradient>
+  <linearGradient id='b' x1='0' y1='0' x2='0' y2='1'><stop offset='0' stop-color='#F8FAFC'/><stop offset='1' stop-color='#CBD5E1'/></linearGradient>
+  <linearGradient id='ouro' x1='0' y1='1' x2='1' y2='0'><stop offset='0' stop-color='#C9962E'/><stop offset='.6' stop-color='#E9C46A'/><stop offset='1' stop-color='#F8E3A3'/></linearGradient>
+  <linearGradient id='area' x1='0' y1='0' x2='0' y2='1'><stop offset='0' stop-color='#E9C46A' stop-opacity='.45'/><stop offset='1' stop-color='#E9C46A' stop-opacity='0'/></linearGradient>
+  <filter id='s' x='-30%' y='-30%' width='160%' height='160%'><feDropShadow dx='0' dy='10' stdDeviation='12' flood-color='#000' flood-opacity='.35'/></filter>
+  <filter id='g' x='-40%' y='-40%' width='180%' height='180%'><feGaussianBlur stdDeviation='6' result='b'/><feMerge><feMergeNode in='b'/><feMergeNode in='SourceGraphic'/></feMerge></filter>
+  <clipPath id='entre'><rect x='200' y='0' width='112' height='512'/></clipPath></defs>
+  <rect width='512' height='512' fill='url(#f)'/><g opacity='.08'><path d='M0 64H512' stroke='#fff' stroke-width='1.5'/><path d='M64 0V512' stroke='#fff' stroke-width='1.5'/><path d='M0 128H512' stroke='#fff' stroke-width='1.5'/><path d='M128 0V512' stroke='#fff' stroke-width='1.5'/><path d='M0 192H512' stroke='#fff' stroke-width='1.5'/><path d='M192 0V512' stroke='#fff' stroke-width='1.5'/><path d='M0 256H512' stroke='#fff' stroke-width='1.5'/><path d='M256 0V512' stroke='#fff' stroke-width='1.5'/><path d='M0 320H512' stroke='#fff' stroke-width='1.5'/><path d='M320 0V512' stroke='#fff' stroke-width='1.5'/><path d='M0 384H512' stroke='#fff' stroke-width='1.5'/><path d='M384 0V512' stroke='#fff' stroke-width='1.5'/><path d='M0 448H512' stroke='#fff' stroke-width='1.5'/><path d='M448 0V512' stroke='#fff' stroke-width='1.5'/></g><rect width='512' height='512' fill='url(#luz)'/>
+  <mask id='corte'><rect width='512' height='512' fill='#fff'/><polyline points='156,312 226,252 266,282 350,202' fill='none' stroke='#000' stroke-width='34' stroke-linejoin='round' stroke-linecap='round'/><polyline points='306,198 352,198 352,244' fill='none' stroke='#000' stroke-width='34' stroke-linejoin='round' stroke-linecap='round'/></mask><g filter='url(#s)' mask='url(#corte)'><rect x='136' y='112' width='64' height='288' rx='14' fill='url(#b)'/><rect x='312' y='112' width='64' height='288' rx='14' fill='url(#b)'/></g>
+  
+    <polyline points='156,312 226,252 266,282 350,202' fill='none' stroke='url(#ouro)' stroke-width='12' stroke-linejoin='round' stroke-linecap='round' filter='url(#g)'/>
+    <polyline points='306,198 352,198 352,244' fill='none' stroke='url(#ouro)' stroke-width='12' stroke-linejoin='round' stroke-linecap='round'/></svg>
