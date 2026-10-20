@@ -2,7 +2,7 @@
 /* HRM Finance — app de controle financeiro pessoal
    Dados: Google Sheets (via Apps Script). Telas: este arquivo. */
 
-const VERSAO_APP = '2.2';
+const VERSAO_APP = '2.3';
 const NOME = 'Henrique';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
@@ -588,7 +588,7 @@ function itemLanc(l) {
   const extras = [l.registro ? 'Nº ' + l.registro : '', l.descricao ? l.categoria : '', l.pagamento, hora(l.dataHora),
     volta ? fmt(volta) + ' a receber' : ''].filter(Boolean).map(esc).join(' · ');
   return `
-  <button class="item" data-acao="editarLanc" data-id="${esc(l.id)}">
+  <button class="item" data-acao="verLanc" data-id="${esc(l.id)}">
     <span class="ico" style="background:${cor}26;color:${cor}">${esc((l.categoria || '?').charAt(0).toUpperCase())}</span>
     <span class="meio">
       <div class="t1">${t1}${l._pendente ? '<span class="tag-pend">enviando</span>' : ''}</div>
@@ -1875,7 +1875,7 @@ function dizimos() {
     const o = acharOrigem(g.origemId);
     const nome = o ? (o.descricao || o.categoria) : 'Entrada';
     const reg = o && o.registro ? `Nº ${esc(o.registro)} · ` : '';
-    return `<button class="item" data-acao="editarLanc" data-id="${esc(g.idItem)}">
+    return `<button class="item" data-acao="verLanc" data-id="${esc(g.idItem)}">
       <span class="ico" style="background:${corCat('Saída', CAT_DIZIMO)}26;color:${corCat('Saída', CAT_DIZIMO)}">D</span>
       <span class="meio">
         <div class="t1">${esc(nome)}${g.pendente ? '<span class="tag-pend">enviando</span>' : ''}</div>
@@ -1991,6 +1991,41 @@ function folhaItemReceber(id) {
     <p class="muted pequeno" style="margin:0 0 6px">${l ? esc(l.descricao || l.categoria) + ' · pago ' + fmt(l.valor) + ' em ' + dataCurta(l.dataHora) : ''}${r.registro ? ' · Nº ' + esc(r.registro) : ''}</p>
     ${acoes}
     ${l ? `<button class="menu-op" data-acao="editarLanc" data-id="${esc(l.id)}">${icone.lapis} Editar a saída</button>` : ''}
+    <button class="btn secundario" data-acao="fecharFolha">Fechar</button>`);
+}
+
+/* Toque num lançamento: abre só para ver; editar fica no botão do lápis */
+function folhaVerLanc(id) {
+  const d = S.dados;
+  const l = d.lancamentos.find(x => mesmoId(x.id, id));
+  if (!l) return;
+  const ent = l.tipo === 'Entrada', sep = ehSeparacao(l);
+  const origem = sep ? d.lancamentos.find(x => mesmoId(x.id, l.origemId)) : null;
+  const seps = ent ? d.lancamentos.filter(x => ehSeparacao(x) && mesmoId(x.origemId, l.id)) : [];
+  const recs = ent ? [] : d.receber.filter(r => mesmoId(r.lancamentoId, l.id));
+  const quando = paraData(l.dataHora).toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  const linha = (rot, val) => `<div class="ver-linha"><span>${rot}</span><b>${val}</b></div>`;
+  const cor = corCat(l.tipo, l.categoria);
+  const st = r => r.status === 'Recebido' ? '<span class="tag-st ok">recebido</span>' : r.status === 'Nota enviada' ? '<span class="tag-st env">nota enviada</span>' : '<span class="tag-st">pendente</span>';
+  abrirFolha(`
+    <div class="ver-topo">
+      <span class="ver-tipo ${ent ? 'pos' : 'neg'}">${sep ? esc(l.parte || 'Dízimo') : ent ? 'Entrada' : 'Saída'}${l._pendente ? '<span class="tag-pend">enviando</span>' : ''}</span>
+      <div class="ver-valor num ${ent ? 'pos' : ''}">${ent ? '+' : '−'}${fmt(l.valor)}</div>
+      <div class="ver-desc">${esc(l.descricao || l.categoria)}</div>
+    </div>
+    <div class="card ver-dados">
+      ${linha('Categoria', `<span class="bolinha" style="background:${cor}"></span>${esc(l.categoria)}`)}
+      ${l.pagamento ? linha('Forma de pagamento', esc(l.pagamento)) : ''}
+      ${linha('Data', `${esc(maiuscula(quando))} · ${hora(l.dataHora)}`)}
+      ${l.registro ? linha('Registro', 'Nº ' + esc(l.registro)) : ''}
+      ${sep && origem ? linha('Separado da entrada', `${esc(origem.descricao || origem.categoria)} · ${fmt(origem.valor)}`) : ''}
+      ${sep ? linha('Situação', l.envioId ? 'Já enviado à igreja' : 'Reservado, a enviar') : ''}
+    </div>
+    ${seps.length ? `<div class="secao">Separado para a igreja</div>
+    <div class="card ver-dados">${seps.map(x => linha(esc(x.parte), `${fmt(x.valor)}${x.envioId ? ' · enviado' : ''}`)).join('')}</div>` : ''}
+    ${recs.length ? `<div class="secao">A receber de volta</div>
+    <div class="card ver-dados">${recs.map(r => linha(esc(r.devedor), `${fmt(r.valor)} ${st(r)}`)).join('')}</div>` : ''}
+    <button class="btn" data-acao="editarLanc" data-id="${esc(l.id)}">${icone.lapis} Editar</button>
     <button class="btn secundario" data-acao="fecharFolha">Fechar</button>`);
 }
 
@@ -2204,6 +2239,7 @@ const ACOES = {
     if (await executar('delLancamento', { id: f.id }, 'Lançamento excluído')) { S.form = null; S.view = 'fluxo'; render(); }
   },
   cancelarEdicao() { S.form = null; S.view = 'fluxo'; render(); },
+  verLanc(el) { folhaVerLanc(el.dataset.id); },
   editarLanc(el) {
     let l = S.dados.lancamentos.find(x => String(x.id) === el.dataset.id);
     if (!l) return;
