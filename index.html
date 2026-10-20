@@ -4,10 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>HRM Finance</title>
-  <meta name="theme-color" content="#0B1630">
+  <meta name="theme-color" content="#F4F6FA">
+  <script>try{var t=JSON.parse(localStorage.getItem('hrm_tema'));document.documentElement.dataset.tema=t==='escuro'?'escuro':'claro'}catch(e){document.documentElement.dataset.tema='claro'}</script>
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="HRM Finance">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" type="image/png" href="favicon.png">
@@ -19,37 +20,23 @@
 </head>
 <body>
   <div id="app">
-    <header class="topo" id="topo" hidden>
-      <div class="marca">
-        <img src="icon-192.png" alt="" width="32" height="32">
-        <span>HRM Finance</span>
-      </div>
-      <div class="topo-acoes">
-        <span class="sync" id="sync" title="Sincronização"></span>
-      </div>
-    </header>
-
     <main id="tela"></main>
 
     <nav class="nav" id="nav" hidden>
-      <button data-view="painel" class="ativo">
-        <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9v9Z"/><path d="M12 3a9 9 0 0 1 9 9h-9Z"/></svg>
-        <span>Painel</span>
+      <button data-view="painel" class="ativo" aria-label="Início">
+        <svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9v11h5v-6h4v6h5V9"/></svg>
       </button>
-      <button data-view="historico">
-        <svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
-        <span>Histórico</span>
+      <button data-view="fluxo" aria-label="Fluxo de caixa">
+        <svg viewBox="0 0 24 24"><path d="M7 4 3 8l4 4"/><path d="M3 8h14"/><path d="m17 20 4-4-4-4"/><path d="M21 16H7"/></svg>
       </button>
-      <button data-view="lancar" class="fab" aria-label="Lançar">
+      <button data-view="lancar" class="fab" aria-label="Lançar entrada ou saída">
         <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
       </button>
-      <button data-view="economias">
-        <svg viewBox="0 0 24 24"><path d="M15 11v.01"/><path d="M5.17 8.38a3 3 0 1 1 4.66-1.38"/><path d="M16 4v3.8a6 6 0 0 1 2.66 3.2H20a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1h-1.34a6 6 0 0 1-1.66 2.47v2.03a1.5 1.5 0 0 1-3 0v-.58a6 6 0 0 1-1 .08h-4a6 6 0 0 1-1-.08v.58a1.5 1.5 0 0 1-3 0v-2.03A6 6 0 0 1 9 7h2.5L16 4Z"/></svg>
-        <span>Economias</span>
+      <button data-view="analise" aria-label="Análise">
+        <svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 6-6"/></svg>
       </button>
-      <button data-view="ajustes">
-        <svg viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>
-        <span>Ajustes</span>
+      <button data-view="orcamento" aria-label="Orçamentos">
+        <svg viewBox="0 0 24 24"><path d="M21 12A9 9 0 1 1 12 3"/><path d="M21 12A9 9 0 0 0 12 3v9z"/></svg>
       </button>
     </nav>
 
@@ -57,6 +44,7 @@
     <section class="folha" id="folha" hidden></section>
     <div class="aviso" id="aviso" role="status" aria-live="polite"></div>
   </div>
+  <div id="relatorio"></div>
   <script src="app.js"></script>
 </body>
 </html>

@@ -60,10 +60,10 @@ App pessoal de controle financeiro do Henrique: registro imediato de entradas e 
 ### 6. Primeiro acesso
 1. Abra o link do app, cole o **URL do app da Web** (passo 4) e digite o **PIN**.
 2. Informe quanto você tem disponível hoje (sem contar cofrinhos).
-3. Pronto! Crie seus cofrinhos na aba **Economias**.
+3. Pronto! Crie seus cofrinhos em **Início → Cofrinhos**.
 
 ### 7. Instalar no celular
-- Dica: no computador, vá em **Ajustes → Link para o celular → Copiar** e mande o link para você mesmo (WhatsApp, e-mail). Ele já abre o app com a planilha preenchida; só falta o PIN.
+- Dica: no computador, toque no **☰ → Link para o celular → Copiar** e mande o link para você mesmo (WhatsApp, e-mail). Ele já abre o app com a planilha preenchida; só falta o PIN.
 - **Android (Chrome):** menu **⋮** → **Instalar app** (ou "Adicionar à tela inicial").
 - **iPhone (Safari):** botão **Compartilhar** → **Adicionar à Tela de Início**.
 
@@ -73,31 +73,31 @@ App pessoal de controle financeiro do Henrique: registro imediato de entradas e 
 
 | Quero… | Onde |
 |---|---|
-| Registrar um gasto ou entrada | Botão **+** → valor → categoria → **Registrar** |
-| Ver quanto tenho para gastar | **Painel → Na carteira** |
-| Ver tudo, incluindo cofrinhos | **Painel → Saldo total** |
-| Corrigir ou apagar um lançamento | **Histórico** → toque no lançamento |
-| Guardar dinheiro | **Economias** → cofrinho → **Guardar** (sai da carteira) |
-| Tirar dinheiro do cofrinho | **Economias** → cofrinho → **Resgatar** (volta para a carteira) |
-| Registrar rendimento | **Economias** → cofrinho → **Atualizar saldo** (digite o valor que o banco mostra) |
-| Criar ou remover categorias | **Ajustes** |
+| Registrar um gasto ou entrada | Botão **+** no meio da barra → valor → categoria → **Registrar** |
+| Ver quanto tenho para gastar | **Início → Na carteira** e **Ainda posso gastar** |
+| Ver o extrato do mês com o saldo de cada dia | **Fluxo** (segunda aba) |
+| Corrigir ou apagar um lançamento | **Fluxo** → toque no lançamento |
+| Guardar dinheiro | **Início → Cofrinhos** → cofrinho → **Guardar** (sai da carteira) |
+| Tirar dinheiro do cofrinho | **Início → Cofrinhos** → cofrinho → **Resgatar** (volta para a carteira) |
+| Registrar rendimento | **Início → Cofrinhos** → cofrinho → **Atualizar saldo** (digite o valor que o banco mostra) |
+| Criar ou excluir categorias | **Orçamentos** (última aba) → **Gastos** ou **Entradas** |
+| Definir quanto posso gastar por categoria | **Orçamentos** → toque na categoria |
 | Separar dízimo e oferta de uma entrada | Ao registrar a entrada, ligue **Dízimo** e/ou **Oferta** |
-| Ver o que está reservado para a igreja | **Painel → Reservado para a igreja** (ou **Economias**) |
-| Registrar o envio do mês à igreja | **Dízimos e ofertas → Enviei para a igreja** |
+| Ver o que está reservado para a igreja | **Início → Fidelidade** |
+| Registrar o envio do mês à igreja | **Fidelidade → Enviei para a igreja** |
 | Registrar compra que a igreja vai reembolsar | Na saída, ligue **Receber de volta → Reembolso** |
 | Dividir um gasto com outras pessoas | Na saída, ligue **Receber de volta → Valor dividido** |
-| Marcar nota enviada ou valor recebido | **Painel → A receber** → toque no item |
-| Ver de que é feito o saldo total | **Painel → Saldo total** |
-| Definir quanto posso gastar por categoria | **Painel → Orçamento → Definir limites** |
-| Ver como está o orçamento do mês | **Painel → Orçamento** |
-| Ver o resumo do ano | **Histórico → Relatório anual** |
-| Registrar uma conta ou pagamento futuro | **Painel → Compromissos → Novo compromisso** |
+| Marcar nota enviada ou valor recebido | **Início → A receber** → toque no item |
+| Registrar uma conta ou pagamento futuro | **Início → Compromissos → Novo compromisso** |
 | Marcar um compromisso como pago | **Compromissos** → toque no item → **Paguei** (abre a saída já preenchida) |
+| Ver a análise do mês, trimestre, semestre ou ano | **Análise** (quarta aba), com comparação com o período anterior ou o ano passado |
+| Gerar o relatório em PDF | **Análise → PDF** → na janela de impressão, escolha **Salvar como PDF** |
+| Trocar para o tema escuro, mudar o saldo inicial, PIN ou sair | Botão **☰** no canto de cima |
 
 **Regras do app**
 - Guardar e resgatar **não** contam como saída nem entrada: só mudam o dinheiro de lugar.
 - O rendimento dos cofrinhos fica no cofrinho e só aumenta o **Saldo total**. Quando um rendimento cair direto na conta, registre como entrada na categoria **Rendimento**.
-- Sem internet? Registre normalmente: o lançamento fica marcado como "enviando" e sobe sozinho quando a conexão voltar. A bolinha no topo mostra o estado: verde (em dia), amarela (enviando), vermelha (sem conexão).
+- Sem internet? Registre normalmente: o lançamento fica marcado como "enviando" e sobe sozinho quando a conexão voltar. A bolinha ao lado do ☰ mostra o estado: verde (em dia), amarela (enviando), vermelha (sem conexão).
 - Dízimo é 10% da entrada, arredondado para cima no centavo, e a oferta (opcional) vem sugerida igual ao dízimo, mas você pode mudar. O valor sai da carteira na hora (conta como gasto em **Dízimos e ofertas**) e fica reservado, fora do saldo total, até você marcar o envio à igreja. Para mudar a oferta, edite a entrada. O dízimo e a oferta usam o mesmo número de registro (Nº) da entrada de onde vieram.
 - O que você vai receber de volta (reembolso da igreja ou parte de outras pessoas) sai da carteira quando você paga, mas não conta como seu gasto: fica em **A receber** e entra no saldo total. Quando receber, o valor volta para a carteira.
 - O orçamento é um limite por categoria que vale para todos os meses até você mudar. O que sobra num mês não passa para o seguinte. Dízimos e ofertas ficam fora do orçamento.
