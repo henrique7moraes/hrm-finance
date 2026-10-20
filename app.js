@@ -2,7 +2,7 @@
 /* HRM Finance — app de controle financeiro pessoal
    Dados: Google Sheets (via Apps Script). Telas: este arquivo. */
 
-const VERSAO_APP = '2.1';
+const VERSAO_APP = '2.2';
 const NOME = 'Henrique';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
@@ -114,28 +114,93 @@ function normalizarBase(d) {
     compromissos: d.compromissos || [], config: d.config || {}, versao: d.versao || 1
   };
 }
+/* O que ainda está na fila (feito offline ou esperando a vez) já aparece na tela, do mesmo jeito que a planilha vai gravar */
 function mesclarFila(base) {
   if (!base) return null;
-  const d = { ...base, lancamentos: base.lancamentos.slice(), receber: base.receber.slice(), compromissos: base.compromissos.slice() };
-  const ids = new Set(d.lancamentos.map(l => String(l.id)));
-  const idsRec = new Set(d.receber.map(r => String(r.id)));
+  const d = { ...base, lancamentos: base.lancamentos.slice(), receber: base.receber.slice(), compromissos: base.compromissos.slice(),
+    cofrinhos: base.cofrinhos.slice(), movimentos: base.movimentos.slice(), envios: base.envios.slice(), config: { ...base.config } };
   for (const f of S.fila) {
-    if (f.acao === 'pagarCompromisso') {
-      // Mostra já como pago enquanto o envio não sobe
-      d.compromissos = d.compromissos.map(c => String(c.id) === String(f.dados.id) ? compromissoPago(c, f.dados) : c);
-      continue;
-    }
-    if (f.acao !== 'addLancamento') continue;
-    if (!ids.has(String(f.dados.id))) d.lancamentos.push({ ...f.dados, _pendente: true });
-    for (const sep of f.dados.separacoes || []) {
-      if (!ids.has(String(sep.id))) d.lancamentos.push({ ...sep, _pendente: true });
-    }
-    for (const r of f.dados.receber || []) {
-      if (!idsRec.has(String(r.id))) d.receber.push({ ...r, dataHora: f.dados.dataHora, lancamentoId: f.dados.id, _pendente: true });
-    }
+    const aplicar = PENDENTES[f.acao];
+    if (aplicar) aplicar(d, f.dados);
   }
   return d;
 }
+const mesmoId = (a, b) => String(a) === String(b);
+const trocar = (lista, id, campos) => lista.map(x => mesmoId(x.id, id) ? { ...x, ...campos, _pendente: true } : x);
+const PENDENTES = {
+  addLancamento(d, f) {
+    if (d.lancamentos.some(l => mesmoId(l.id, f.id))) return;
+    d.lancamentos.push({ ...f, _pendente: true });
+    for (const sep of f.separacoes || []) if (!d.lancamentos.some(l => mesmoId(l.id, sep.id))) d.lancamentos.push({ ...sep, _pendente: true });
+    for (const r of f.receber || []) if (!d.receber.some(x => mesmoId(x.id, r.id))) d.receber.push({ ...r, dataHora: f.dataHora, lancamentoId: f.id, _pendente: true });
+  },
+  editLancamento(d, f) {
+    const l = d.lancamentos.find(x => mesmoId(x.id, f.id));
+    if (!l) return;
+    const ent = { ...l, dataHora: f.dataHora, tipo: f.tipo, valor: num(f.valor), categoria: f.categoria, pagamento: f.pagamento || '', descricao: f.descricao || '' };
+    d.lancamentos = trocar(d.lancamentos, f.id, ent);
+    const seps = d.lancamentos.filter(x => ehSeparacao(x) && mesmoId(x.origemId, f.id));
+    if (f.dizimo !== undefined && !seps.some(x => x.envioId)) {
+      const valores = { 'Dízimo': f.tipo === 'Entrada' && f.dizimo ? dizimoDe(f.valor) : 0, 'Oferta': f.tipo === 'Entrada' ? num(f.oferta) : 0 };
+      for (const parte of Object.keys(valores)) {
+        const atual = seps.find(x => x.parte === parte);
+        if (valores[parte] <= 0) { if (atual) d.lancamentos = d.lancamentos.filter(x => x !== atual); continue; }
+        const nova = { id: atual ? atual.id : f.id + '-' + parte, dataHora: ent.dataHora, tipo: 'Saída', valor: valores[parte], categoria: CAT_DIZIMO,
+          pagamento: 'Pix', descricao: parte + ' · ' + (ent.descricao || ent.categoria), registro: ent.registro, origemId: ent.id, parte, _pendente: true };
+        d.lancamentos = atual ? d.lancamentos.map(x => x === atual ? nova : x) : d.lancamentos.concat(nova);
+      }
+    }
+    if (f.receber !== undefined) {
+      const ligados = d.receber.filter(r => mesmoId(r.lancamentoId, f.id));
+      if (!ligados.some(r => r.status === 'Recebido')) {
+        d.receber = d.receber.filter(r => !mesmoId(r.lancamentoId, f.id));
+        if (f.tipo === 'Saída') for (const r of f.receber || []) {
+          if (String(r.devedor || '').trim() && num(r.valor) > 0) d.receber.push({ ...r, status: r.status || 'Pendente', dataHora: f.dataHora, lancamentoId: f.id, registro: ent.registro, _pendente: true });
+        }
+      }
+    }
+  },
+  delLancamento(d, f) {
+    d.lancamentos = d.lancamentos.filter(l => !mesmoId(l.id, f.id) && !(ehSeparacao(l) && mesmoId(l.origemId, f.id) && !l.envioId));
+    d.receber = d.receber.filter(r => !mesmoId(r.lancamentoId, f.id));
+  },
+  addCompromisso(d, f) {
+    if (d.compromissos.some(c => mesmoId(c.id, f.id))) return;
+    d.compromissos.push({ id: f.id, descricao: String(f.descricao || '').trim(), valor: num(f.valor), vencimento: f.vencimento, dia: Number(String(f.vencimento).slice(8, 10)),
+      categoria: f.categoria || '', repete: f.repete === 'Mensal' ? 'Mensal' : 'Não', status: 'Aberto', pagoEm: '', lancamentoId: '', _pendente: true });
+  },
+  editCompromisso(d, f) {
+    d.compromissos = trocar(d.compromissos, f.id, { descricao: String(f.descricao || '').trim(), valor: num(f.valor), vencimento: f.vencimento,
+      dia: Number(String(f.vencimento).slice(8, 10)), categoria: f.categoria || '', repete: f.repete === 'Mensal' ? 'Mensal' : 'Não' });
+  },
+  delCompromisso(d, f) { d.compromissos = d.compromissos.filter(c => !mesmoId(c.id, f.id)); },
+  pagarCompromisso(d, f) { d.compromissos = d.compromissos.map(c => mesmoId(c.id, f.id) ? compromissoPago(c, f) : c); },
+  statusReceber(d, f) {
+    const ids = (f.ids || []).map(String);
+    d.receber = d.receber.map(r => ids.includes(String(r.id)) ? { ...r, status: f.status, atualizadoEm: f.dataHora, _pendente: true } : r);
+  },
+  setConfig(d, f) { d.config[f.chave] = f.valor; },
+  editCofrinho(d, f) { d.cofrinhos = trocar(d.cofrinhos, f.id, { nome: String(f.nome || '').trim(), banco: String(f.banco || '').trim(), meta: num(f.meta) }); },
+  movCofrinho(d, f) {
+    d.movimentos.push({ id: 'pend-' + d.movimentos.length, dataHora: f.dataHora, cofrinhoId: f.cofrinhoId, tipo: f.tipo, valor: num(f.valor), obs: f.obs || '', _pendente: true });
+  },
+  atualizarSaldo(d, f) {
+    const atual = d.movimentos.filter(m => mesmoId(m.cofrinhoId, f.cofrinhoId)).reduce((s, m) => s + (m.tipo === 'Resgatar' ? -num(m.valor) : num(m.valor)), 0);
+    const dif = r2(num(f.novoSaldo) - atual);
+    if (dif) d.movimentos.push({ id: 'pend-' + d.movimentos.length, dataHora: f.dataHora, cofrinhoId: f.cofrinhoId, tipo: 'Rendimento', valor: dif, obs: 'Atualização de saldo', _pendente: true });
+  },
+  enviarIgreja(d, f) {
+    const pend = d.lancamentos.filter(l => ehSeparacao(l) && !l.envioId);
+    if (!pend.length) return;
+    const soma = parte => r2(pend.filter(l => l.parte === parte).reduce((s, l) => s + num(l.valor), 0));
+    d.envios.push({ id: f.id, dataHora: f.dataHora, dizimo: soma('Dízimo'), oferta: soma('Oferta'), obs: f.obs || '', _pendente: true });
+    d.lancamentos = d.lancamentos.map(l => pend.includes(l) ? { ...l, envioId: f.id, _pendente: true } : l);
+  },
+  desfazerEnvio(d, f) {
+    d.lancamentos = d.lancamentos.map(l => mesmoId(l.envioId, f.id) ? { ...l, envioId: '', _pendente: true } : l);
+    d.envios = d.envios.filter(e => !mesmoId(e.id, f.id));
+  }
+};
 function recalcular() { S.dados = mesclarFila(S.base); }
 function receber(d) { S.base = normalizarBase(d); lsSet('hrm_dados', S.base); recalcular(); }
 function salvarFila() { lsSet('hrm_fila', S.fila); recalcular(); atualizarSync(); }
@@ -162,8 +227,13 @@ async function chamar(acao, dados = {}, pin = S.pin, url = S.url) {
 let ocupado = false;
 function marcarOcupado(v) { ocupado = v; document.body.classList.toggle('ocupado', v); }
 
+/* Alterações que funcionam sem internet: ficam guardadas no aparelho e sobem na ordem em que foram feitas */
+const NA_FILA = new Set(['editLancamento', 'delLancamento', 'addCompromisso', 'editCompromisso', 'delCompromisso', 'statusReceber',
+  'setConfig', 'editCofrinho', 'movCofrinho', 'atualizarSaldo', 'enviarIgreja', 'desfazerEnvio']);
+
 async function executar(acao, dados, msgOk) {
   if (ocupado) return false;
+  if (NA_FILA.has(acao) && (S.fila.length || !navigator.onLine)) return guardarNaFila(acao, dados, msgOk);
   marcarOcupado(true);
   try {
     receber(await chamar(acao, dados));
@@ -171,6 +241,7 @@ async function executar(acao, dados, msgOk) {
     if (msgOk) avisar(msgOk);
     return true;
   } catch (e) {
+    if (e.offline && NA_FILA.has(acao)) { S.status = 'offline'; return guardarNaFila(acao, dados, msgOk); }
     tratarErro(e);
     return false;
   } finally {
@@ -214,7 +285,7 @@ async function processarFila() {
     else {
       S.fila.shift(); lsSet('hrm_fila', S.fila); recalcular();
       S.status = 'erro';
-      avisar('Um lançamento não foi salvo: ' + e.message, true);
+      avisar('Uma alteração não foi salva na planilha: ' + e.message, true);
     }
   } finally {
     processando = false;
@@ -241,6 +312,12 @@ async function atualizar(mostrar) {
 }
 
 function enfileirar(item) { S.fila.push(item); salvarFila(); }
+function guardarNaFila(acao, dados, msgOk) {
+  enfileirar({ acao, dados });
+  avisar((msgOk || 'Alteração salva') + (navigator.onLine && S.status !== 'offline' ? '' : ' · vai para a planilha quando a internet voltar'));
+  processarFila();
+  return true;
+}
 
 /* ---------- cálculos ---------- */
 /* Quanto de cada saída vai voltar (reembolso da igreja ou divisão com outras pessoas) */
@@ -318,7 +395,7 @@ function atualizarSync() {
   const el = $('#sync');
   if (!el) return;
   el.className = 'sync' + (S.fila.length ? ' pendente' : (S.status === 'offline' || S.status === 'erro') ? ' offline' : '');
-  el.title = S.fila.length ? `${S.fila.length} lançamento(s) aguardando envio`
+  el.title = S.fila.length ? `${S.fila.length} alteração(ões) aguardando envio`
     : S.status === 'offline' ? 'Sem conexão' : S.status === 'erro' ? 'Erro ao sincronizar' : 'Sincronizado';
 }
 
@@ -403,6 +480,7 @@ function render() {
   if (S.view === 'lancar' && !S.form) S.form = novoForm();
   const views = { painel, fluxo, lancar, analise, economias, dizimos, receber: telaReceber,
     orcamento: telaOrcamento, compromissos: telaCompromissos };
+  $('#tela').dataset.tela = views[S.view] ? S.view : 'painel';
   $('#tela').innerHTML = (views[S.view] || painel)();
   $$('#nav [data-view]').forEach(b => b.classList.toggle('ativo', b.dataset.view === S.view));
   atualizarSync();
@@ -599,6 +677,7 @@ function painel() {
 
   return `
   ${cabecalho(`${saudacao()}, ${NOME}`, { sobre: 'Início' })}
+  <div class="grade-inicio">
   <section class="heroi">
     <div class="rotulo">Na carteira</div>
     <div class="valor-grande num">${fmt(c.carteira)}</div>
@@ -621,8 +700,11 @@ function painel() {
   ${primeiraVez ? `
   <div class="card dica">${icone.dica}<div><b>Primeiros passos</b><br>Toque no <b>+</b> para registrar um gasto ou uma entrada. Seus cofrinhos você cria tocando em <b>Cofrinhos</b>.</div></div>` : ''}
 
+  <div class="ultimos">
   <div class="h2-linha"><h2>Últimos lançamentos</h2>${recentes.length ? '<button class="link-btn" data-view="fluxo">Ver tudo</button>' : ''}</div>
-  ${recentes.length ? `<div class="lista grupo">${recentes.map(itemLanc).join('')}</div>` : '<div class="card vazio">Nenhum lançamento ainda.</div>'}`;
+  ${recentes.length ? `<div class="lista grupo">${recentes.map(itemLanc).join('')}</div>` : '<div class="card vazio">Nenhum lançamento ainda.</div>'}
+  </div>
+  </div>`;
 }
 
 /* "Ainda posso gastar": o que sobra dos limites do mês e as duas categorias mais perto de estourar */
@@ -862,19 +944,25 @@ function fluxo() {
   return `
   ${cabecalho('Fluxo de caixa')}
   ${mesNav()}
+  <div class="grade-fluxo">
+  <aside class="lado">
   <div class="card trio">
     <div><span>Entrou</span><b class="num pos">${fmt(ent)}</b></div>
     <div><span>Saiu</span><b class="num">${fmt(sai)}</b></div>
     <div><span>Sobrou</span><b class="num ${ent - sai < 0 ? 'neg' : ''}">${sinal(r2(ent - sai))}</b></div>
   </div>
   ${previsto}
+  </aside>
+  <div class="principal">
   <h2>Extrato</h2>
   <div class="filtros">
     ${chip('todos', 'Todos')}${chip('tipo:Saída', 'Saídas')}${chip('tipo:Entrada', 'Entradas')}${temMov ? chip('cofre', 'Cofrinhos') : ''}
     ${catsDoMes.map(k => { const [t, n] = k.split('|'); return chip('cat:' + k, n, corCat(t, n)); }).join('')}
   </div>
   <div class="busca">${icone.busca}<input id="inBusca" class="campo" type="search" placeholder="Buscar no mês" value="${esc(S.busca)}" autocomplete="off"></div>
-  <div id="fluxoLista">${listaFluxo()}</div>`;
+  <div id="fluxoLista">${listaFluxo()}</div>
+  </div>
+  </div>`;
 }
 
 /* ---------- ANÁLISE ---------- */
@@ -1073,12 +1161,18 @@ function analise() {
   <div class="cmp">${per === 'ano' ? '<button class="on">vs ano passado</button>' : `
     <button class="${cmp === 'ant' ? 'on' : ''}" data-acao="cmp" data-cmp="ant">vs anterior</button>
     <button class="${cmp === 'ano' ? 'on' : ''}" data-acao="cmp" data-cmp="ano">vs ano passado</button>`}</div>
+  <div class="grade-analise">
+  <div>
   ${resumo}
   ${para}
+  </div>
+  <div>
   <div class="bloco-t">Fixos x variáveis</div>
   ${fixVar}
   <div class="bloco-t">Reserva de emergência</div>
-  ${res}`;
+  ${res}
+  </div>
+  </div>`;
 }
 
 /* ---------- RELATÓRIO EM PDF ---------- */
@@ -2009,7 +2103,7 @@ const ACOES = {
   },
   tentarDeNovo() { S.erroCarga = ''; render(); atualizar(); },
   trocarPlanilha() {
-    if (S.fila.length && !confirm('Há lançamentos ainda não enviados neste aparelho. Sair mesmo assim? Eles serão perdidos.')) return;
+    if (S.fila.length && !confirm('Há alterações ainda não enviadas deste aparelho. Sair mesmo assim? Elas serão perdidas.')) return;
     if (!S.fila.length && S.dados && !confirm('Desconectar este aparelho da planilha?')) return;
     esquecerPin();
     S.url = ''; S.base = null; S.dados = null; S.fila = []; S.pinDig = ''; S.erroCarga = '';
@@ -2102,8 +2196,11 @@ const ACOES = {
   async excluirLanc() {
     const f = S.form;
     if (!confirm('Excluir este lançamento?')) return;
-    const i = S.fila.findIndex(x => x.acao === 'addLancamento' && x.dados.id === f.id);
-    if (i >= 0) { S.fila.splice(i, 1); salvarFila(); avisar('Lançamento excluído'); S.form = null; S.view = 'fluxo'; render(); return; }
+    if (S.fila.some(x => x.acao === 'addLancamento' && x.dados.id === f.id)) {
+      // Ainda não subiu: some da fila junto com o que dependia dele
+      S.fila = S.fila.filter(x => !(/Lancamento$/.test(x.acao) && mesmoId(x.dados.id, f.id)) && !(x.acao === 'pagarCompromisso' && mesmoId(x.dados.lancamentoId, f.id)));
+      salvarFila(); avisar('Lançamento excluído'); S.form = null; S.view = 'fluxo'; render(); return;
+    }
     if (await executar('delLancamento', { id: f.id }, 'Lançamento excluído')) { S.form = null; S.view = 'fluxo'; render(); }
   },
   cancelarEdicao() { S.form = null; S.view = 'fluxo'; render(); },
@@ -2200,13 +2297,11 @@ const ACOES = {
     const ids = el.dataset.ids.split(',');
     const st = el.dataset.status;
     const msg = st === 'Recebido' ? 'Recebido! O valor voltou para a carteira' : st === 'Nota enviada' ? 'Nota marcada como enviada' : 'Situação atualizada';
-    if (S.fila.length) return avisar('Espere os lançamentos pendentes subirem para a planilha.', true);
     if (await executar('statusReceber', { ids, status: st, dataHora: isoLocal() }, msg)) { fecharFolha(); render(); }
   },
   enviarIgreja() { folhaEnviar(); },
   async confirmarEnvio() {
     const v = calcular(S.dados, chaveMes()).reservado;
-    if (S.fila.length) return avisar('Espere os lançamentos pendentes subirem para a planilha.', true);
     if (await executar('enviarIgreja', { id: uid(), dataHora: isoLocal() }, `${fmt(v)} enviado para a igreja`)) { fecharFolha(); render(); }
   },
   menuEnvio(el) { folhaMenuEnvio(el.dataset.id); },
@@ -2388,6 +2483,8 @@ window.addEventListener('online', () => { S.status = 'ok'; processarFila(); atua
 window.addEventListener('offline', () => { S.status = 'offline'; atualizarSync(); });
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') atualizar(); });
 setInterval(() => { if (S.fila.length) processarFila(); }, 30000);
+// Com o app aberto (no celular ou no computador), busca a cada minuto o que foi feito no outro aparelho
+setInterval(() => { if (document.visibilityState === 'visible' && navigator.onLine && !S.fila.length) atualizar(); }, 60000);
 
 /* ---------- início ---------- */
 (function iniciar() {
@@ -2401,7 +2498,7 @@ setInterval(() => { if (S.fila.length) processarFila(); }, 30000);
   recalcular();
   render();
   if (S.url && S.pin) atualizar();
-  if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
     navigator.serviceWorker.register('sw.js').catch(() => { });
   }
 })();
