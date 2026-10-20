@@ -477,6 +477,74 @@ h2 { font-size: 15px; margin: 22px 2px 10px; font-weight: 800; color: var(--text
 .reserva-escala span:first-child { transform: none; }
 .reserva-escala span:last-child { transform: translateX(-100%); }
 
+/* versão para computador: menu lateral e telas em colunas */
+.marca, .so-web, .nav .rot { display: none; }
+@media (min-width: 1000px) {
+  #app { max-width: none; }
+  main { --largura: 1120px; margin-left: 248px; padding: 8px max(40px, calc((100vw - 248px - var(--largura)) / 2)) 48px; }
+  main[data-tela="lancar"], main[data-tela="orcamento"], main[data-tela="economias"],
+  main[data-tela="dizimos"], main[data-tela="receber"], main[data-tela="compromissos"] { --largura: 760px; }
+  .cab { padding-top: 24px; margin-bottom: 18px; }
+  .cab h1 { font-size: 26px; }
+
+  .nav {
+    left: 0; top: 0; bottom: 0; transform: none; width: 248px; max-width: none; height: auto;
+    display: flex; flex-direction: column; align-items: stretch; gap: 2px;
+    border-radius: 0; padding: 22px 14px; box-shadow: none; overflow-y: auto;
+  }
+  .marca { display: flex; align-items: center; gap: 10px; padding: 0 10px 22px; color: #FFFFFF; font-size: 17px; }
+  .marca img { width: 36px; height: 36px; border-radius: 10px; }
+  .nav button { height: 46px; flex-direction: row; justify-content: flex-start; gap: 12px; padding: 0 14px; border-radius: 12px; font-size: 14px; font-weight: 700; }
+  .nav button::after { display: none; }
+  .nav .rot { display: inline; }
+  .nav svg { width: 21px; height: 21px; }
+  .nav button:hover { background: rgba(255, 255, 255, .06); color: #FFFFFF; }
+  .nav button.ativo { background: rgba(255, 255, 255, .12); }
+  .nav .fab { order: -1; justify-self: auto; width: auto; height: 48px; border-radius: 14px; margin: 0 0 16px; justify-content: center; }
+  .nav .fab:hover { background: var(--destaque); filter: brightness(1.1); }
+  .nav .fab.ativo { box-shadow: none; background: var(--destaque); }
+  .marca { order: -2; }
+  .so-web { display: flex; flex-direction: column; gap: 2px; }
+  .nav-secao { font-size: 11px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: var(--barra-ic); opacity: .8; padding: 22px 14px 8px; }
+
+  /* Início: destaque e "posso gastar" lado a lado, atalhos numa linha só */
+  .grade-inicio { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+  .grade-inicio > .heroi { grid-column: 1; grid-row: 1; padding: 28px 28px 24px; align-self: stretch; display: flex; flex-direction: column; justify-content: space-between; }
+  .grade-inicio > .heroi .valor-grande { font-size: 42px; }
+  .grade-inicio > .heroi .heroi-linha { font-size: 13px; }
+  .grade-inicio > .heroi .heroi-linha b { font-size: 17px; }
+  .grade-inicio > .posso, .grade-inicio > .linha-btn { grid-column: 2; grid-row: 1; margin-top: 0 !important; align-self: stretch; }
+  .grade-inicio > .atalhos { grid-column: 1 / -1; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 0; gap: 16px; }
+  .grade-inicio > .atalho-b, .atalhos .atalho-b { min-height: 84px; }
+  .grade-inicio > .dica, .grade-inicio > .ultimos { grid-column: 1 / -1; margin-top: 0; }
+  .grade-inicio .ultimos h2 { margin-top: 8px; }
+
+  /* Fluxo: extrato largo à esquerda, resumo e previsto à direita */
+  .grade-fluxo { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 24px; align-items: start; }
+  .grade-fluxo > .lado { grid-column: 2; grid-row: 1; position: sticky; top: 20px; }
+  .grade-fluxo > .principal { grid-column: 1; grid-row: 1; }
+  .grade-fluxo > .principal > h2:first-child { margin-top: 0; }
+  .grade-fluxo .lado .trio { grid-template-columns: 1fr; gap: 12px; }
+  .grade-fluxo .lado .trio b { font-size: 20px; }
+  .filtros { flex-wrap: wrap; overflow: visible; }
+
+  /* Análise: duas colunas */
+  .grade-analise { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; align-items: start; }
+  .grade-analise .bloco-t:first-child { margin-top: 12px; }
+  .grafico svg.rosca { width: 150px; height: 150px; }
+
+  /* janelas abrem no centro, menu continua na lateral direita */
+  .folha:not(.lateral) {
+    left: calc(50% + 124px); top: 50%; bottom: auto; transform: translate(-50%, -50%); max-width: 520px; max-height: 86vh;
+    border-radius: 24px; padding: 22px 24px 24px; animation: centro .2s ease-out; box-shadow: var(--sombra);
+  }
+  .folha:not(.lateral)::before { display: none; }
+  .aviso { bottom: 28px; left: calc(50% + 124px); }
+  .item:hover, .orc-item:hover, .atalho-b:hover, .linha-btn:hover { filter: brightness(.97); }
+  html[data-tema="escuro"] .item:hover, html[data-tema="escuro"] .orc-item:hover, html[data-tema="escuro"] .atalho-b:hover { filter: brightness(1.12); }
+}
+@keyframes centro { from { transform: translate(-50%, -46%); opacity: 0; } }
+
 /* relatório para imprimir (PDF) */
 #relatorio { display: none; }
 @media print {
