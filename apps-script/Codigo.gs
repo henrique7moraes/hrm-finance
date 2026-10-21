@@ -6,7 +6,7 @@
  * 3. Implante como "App da Web" (Executar como: Eu | Quem pode acessar: Qualquer pessoa).
  */
 const PIN = '0000';
-const VERSAO = 4;
+const VERSAO = 5;
 const CAT_DIZIMO = 'Dízimos e ofertas';
 
 const ABAS = {
@@ -15,7 +15,7 @@ const ABAS = {
   Cofrinhos:    ['id', 'nome', 'banco', 'meta', 'criadoEm'],
   MovCofrinhos: ['id', 'dataHora', 'cofrinhoId', 'tipo', 'valor', 'obs'],
   EnviosIgreja: ['id', 'dataHora', 'dizimo', 'oferta', 'obs'],
-  AReceber:     ['id', 'dataHora', 'lancamentoId', 'registro', 'devedor', 'valor', 'status', 'atualizadoEm', 'obs'],
+  AReceber:     ['id', 'dataHora', 'lancamentoId', 'registro', 'devedor', 'valor', 'status', 'atualizadoEm', 'obs', 'categoria', 'previsto', 'entradaId'],
   Compromissos: ['id', 'descricao', 'valor', 'vencimento', 'dia', 'categoria', 'repete', 'status', 'pagoEm', 'lancamentoId', 'criadoEm'],
   Config:       ['chave', 'valor']
 };
@@ -73,20 +73,7 @@ function executar_(acao, d) {
       return;
 
     case 'addLancamento':
-      if (acharLinha_('Lancamentos', d.id)) return; // já gravado (envio repetido)
-      validarValor_(d.valor);
-      const nova = anexar_('Lancamentos', {
-        id: d.id || novoId_(), dataHora: d.dataHora || agora_(), tipo: d.tipo,
-        valor: num_(d.valor), categoria: d.categoria, pagamento: d.pagamento || '',
-        descricao: d.descricao || ''
-      });
-      // Dízimo e oferta separados desta entrada (vêm prontos do app, para funcionar offline)
-      if (d.tipo === 'Entrada' && Array.isArray(d.separacoes)) {
-        d.separacoes.forEach(sp => {
-          if (num_(sp.valor) > 0 && !acharLinha_('Lancamentos', sp.id)) anexar_('Lancamentos', separacao_(nova, sp.parte, sp.valor, sp.id));
-        });
-      }
-      if (d.tipo === 'Saída' && Array.isArray(d.receber)) gravarReceber_(nova, d.receber);
+      addLancamento_(d);
       return;
 
     case 'editLancamento':
@@ -110,6 +97,9 @@ function executar_(acao, d) {
       remover_('Lancamentos', d.id);
       separacoesDe_(d.id).filter(s => !s.envioId).forEach(s => remover_('Lancamentos', s.id));
       receberDe_(d.id).forEach(r => remover_('AReceber', r.id));
+      // Era o recebimento de um valor avulso: ele volta a ficar a receber
+      ler_('AReceber').filter(r => String(r.entradaId) === String(d.id))
+        .forEach(r => atualizar_('AReceber', r.id, { status: 'Pendente', atualizadoEm: '', entradaId: '' }));
       return;
 
     case 'addCompromisso': {
@@ -156,6 +146,50 @@ function executar_(acao, d) {
       (d.ids || []).forEach(id => {
         if (acharLinha_('AReceber', id)) atualizar_('AReceber', id, { status: d.status, atualizadoEm: d.dataHora || agora_() });
       });
+      return;
+    }
+
+    // Valor a receber avulso (ex.: um serviço): não nasce de uma saída; quando pago, vira uma entrada
+    case 'addReceber': {
+      const devedor = String(d.devedor || '').trim();
+      if (!devedor) throw new Error('Informe quem vai pagar.');
+      validarValor_(d.valor);
+      if (acharLinha_('AReceber', d.id)) return;
+      anexar_('AReceber', {
+        id: d.id || novoId_(), dataHora: d.dataHora || agora_(), lancamentoId: '', registro: '', devedor: devedor,
+        valor: num_(d.valor), status: 'Pendente', atualizadoEm: '', obs: String(d.obs || '').trim(),
+        categoria: d.categoria || '', previsto: d.previsto || '', entradaId: ''
+      });
+      return;
+    }
+
+    case 'editReceber': {
+      const r = ler_('AReceber').filter(x => String(x.id) === String(d.id))[0];
+      if (!r || r.lancamentoId) throw new Error('Este valor a receber não pode ser editado aqui.');
+      if (r.status === 'Recebido') throw new Error('Este valor já foi recebido.');
+      const devedor = String(d.devedor || '').trim();
+      if (!devedor) throw new Error('Informe quem vai pagar.');
+      validarValor_(d.valor);
+      atualizar_('AReceber', d.id, { devedor: devedor, valor: num_(d.valor), obs: String(d.obs || '').trim(), categoria: d.categoria || '', previsto: d.previsto || '' });
+      return;
+    }
+
+    case 'delReceber': {
+      const r = ler_('AReceber').filter(x => String(x.id) === String(d.id))[0];
+      if (!r) return;
+      if (r.lancamentoId) throw new Error('Este valor está ligado a uma saída: mude pela saída.');
+      remover_('AReceber', d.id);
+      return;
+    }
+
+    case 'receberAvulso': {
+      const r = ler_('AReceber').filter(x => String(x.id) === String(d.id))[0];
+      if (!r) throw new Error('Valor a receber não encontrado.');
+      if (r.status === 'Recebido') return; // envio repetido
+      const e = d.entrada || {};
+      if (e.tipo !== 'Entrada') throw new Error('O recebimento precisa ser uma entrada.');
+      addLancamento_(e);
+      atualizar_('AReceber', d.id, { status: 'Recebido', atualizadoEm: e.dataHora || agora_(), entradaId: e.id });
       return;
     }
 
@@ -248,6 +282,23 @@ function executar_(acao, d) {
   }
 }
 
+function addLancamento_(d) {
+  if (acharLinha_('Lancamentos', d.id)) return; // já gravado (envio repetido)
+  validarValor_(d.valor);
+  const nova = anexar_('Lancamentos', {
+    id: d.id || novoId_(), dataHora: d.dataHora || agora_(), tipo: d.tipo,
+    valor: num_(d.valor), categoria: d.categoria, pagamento: d.pagamento || '',
+    descricao: d.descricao || ''
+  });
+  // Dízimo e oferta separados desta entrada (vêm prontos do app, para funcionar offline)
+  if (d.tipo === 'Entrada' && Array.isArray(d.separacoes)) {
+    d.separacoes.forEach(sp => {
+      if (num_(sp.valor) > 0 && !acharLinha_('Lancamentos', sp.id)) anexar_('Lancamentos', separacao_(nova, sp.parte, sp.valor, sp.id));
+    });
+  }
+  if (d.tipo === 'Saída' && Array.isArray(d.receber)) gravarReceber_(nova, d.receber);
+}
+
 /* ---------- planilha ---------- */
 
 function preparar_() {
@@ -259,7 +310,7 @@ function preparar_() {
       sh.getRange(1, 1, 1, ABAS[nome].length).setValues([ABAS[nome]]).setFontWeight('bold');
       sh.setFrozenRows(1);
       if (['Lancamentos', 'MovCofrinhos', 'EnviosIgreja', 'AReceber'].indexOf(nome) >= 0) sh.getRange('B:B').setNumberFormat('@');
-      if (nome === 'AReceber') sh.getRange('H:H').setNumberFormat('@');
+      if (nome === 'AReceber') { sh.getRange('H:H').setNumberFormat('@'); sh.getRange('K:K').setNumberFormat('@'); }
       if (nome === 'Compromissos') { sh.getRange('D:D').setNumberFormat('@'); sh.getRange('I:I').setNumberFormat('@'); sh.getRange('K:K').setNumberFormat('@'); }
       if (nome === 'Cofrinhos') sh.getRange('E:E').setNumberFormat('@');
       if (nome === 'Categorias') sh.getRange(2, 1, CATEGORIAS_PADRAO.length, 3).setValues(CATEGORIAS_PADRAO);
@@ -269,6 +320,7 @@ function preparar_() {
       if (n < cab.length) {
         sh.getRange(1, n + 1, 1, cab.length - n).setValues([cab.slice(n)]).setFontWeight('bold');
         if (nome === 'Lancamentos') numerarRegistros_(sh);
+        if (nome === 'AReceber') sh.getRange('K:K').setNumberFormat('@');
       }
     }
   });

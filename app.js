@@ -2,7 +2,7 @@
 /* HRM Finance — app de controle financeiro pessoal
    Dados: Google Sheets (via Apps Script). Telas: este arquivo. */
 
-const VERSAO_APP = '2.3';
+const VERSAO_APP = '2.4';
 const NOME = 'Henrique';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
@@ -23,6 +23,8 @@ const CAT_DIZIMO = 'Dízimos e ofertas';
 /* Dízimo = 10% arredondado para cima no centavo; a oferta começa igual ao dízimo e pode ser mudada */
 const dizimoDe = v => Math.ceil(Math.round(num(v) * 100) / 10) / 100;
 const ehSeparacao = l => !!l.origemId;
+// Valor a receber avulso (ex.: um serviço): não veio de uma saída; quando pago, vira uma entrada
+const ehAvulso = r => !r.lancamentoId;
 const CORES = ['#F2994A', '#56CCF2', '#F2C94C', '#BB6BD9', '#27AE60', '#6FCF97', '#EB5757', '#2D9CDB',
   '#FF8FB1', '#A3E635', '#FFB86B', '#9B8CFF', '#4DD4C6', '#C0C7D6'];
 
@@ -162,7 +164,8 @@ const PENDENTES = {
   },
   delLancamento(d, f) {
     d.lancamentos = d.lancamentos.filter(l => !mesmoId(l.id, f.id) && !(ehSeparacao(l) && mesmoId(l.origemId, f.id) && !l.envioId));
-    d.receber = d.receber.filter(r => !mesmoId(r.lancamentoId, f.id));
+    d.receber = d.receber.filter(r => !mesmoId(r.lancamentoId, f.id))
+      .map(r => mesmoId(r.entradaId, f.id) ? { ...r, status: 'Pendente', atualizadoEm: '', entradaId: '', _pendente: true } : r);
   },
   addCompromisso(d, f) {
     if (d.compromissos.some(c => mesmoId(c.id, f.id))) return;
@@ -175,6 +178,19 @@ const PENDENTES = {
   },
   delCompromisso(d, f) { d.compromissos = d.compromissos.filter(c => !mesmoId(c.id, f.id)); },
   pagarCompromisso(d, f) { d.compromissos = d.compromissos.map(c => mesmoId(c.id, f.id) ? compromissoPago(c, f) : c); },
+  addReceber(d, f) {
+    if (d.receber.some(r => mesmoId(r.id, f.id))) return;
+    d.receber.push({ id: f.id, dataHora: f.dataHora, lancamentoId: '', registro: '', devedor: String(f.devedor || '').trim(), valor: num(f.valor),
+      status: 'Pendente', atualizadoEm: '', obs: f.obs || '', categoria: f.categoria || '', previsto: f.previsto || '', entradaId: '', _pendente: true });
+  },
+  editReceber(d, f) {
+    d.receber = trocar(d.receber, f.id, { devedor: String(f.devedor || '').trim(), valor: num(f.valor), obs: f.obs || '', categoria: f.categoria || '', previsto: f.previsto || '' });
+  },
+  delReceber(d, f) { d.receber = d.receber.filter(r => !(mesmoId(r.id, f.id) && ehAvulso(r))); },
+  receberAvulso(d, f) {
+    PENDENTES.addLancamento(d, f.entrada);
+    d.receber = trocar(d.receber, f.id, { status: 'Recebido', atualizadoEm: f.entrada.dataHora, entradaId: f.entrada.id });
+  },
   statusReceber(d, f) {
     const ids = (f.ids || []).map(String);
     d.receber = d.receber.map(r => ids.includes(String(r.id)) ? { ...r, status: f.status, atualizadoEm: f.dataHora, _pendente: true } : r);
@@ -228,7 +244,7 @@ let ocupado = false;
 function marcarOcupado(v) { ocupado = v; document.body.classList.toggle('ocupado', v); }
 
 /* Alterações que funcionam sem internet: ficam guardadas no aparelho e sobem na ordem em que foram feitas */
-const NA_FILA = new Set(['editLancamento', 'delLancamento', 'addCompromisso', 'editCompromisso', 'delCompromisso', 'statusReceber',
+const NA_FILA = new Set(['addReceber', 'editReceber', 'delReceber', 'editLancamento', 'delLancamento', 'addCompromisso', 'editCompromisso', 'delCompromisso', 'statusReceber',
   'setConfig', 'editCofrinho', 'movCofrinho', 'atualizarSaldo', 'enviarIgreja', 'desfazerEnvio']);
 
 async function executar(acao, dados, msgOk) {
@@ -323,7 +339,7 @@ function guardarNaFila(acao, dados, msgOk) {
 /* Quanto de cada saída vai voltar (reembolso da igreja ou divisão com outras pessoas) */
 function receberPorLanc(d) {
   const m = {};
-  for (const r of d.receber) m[String(r.lancamentoId)] = (m[String(r.lancamentoId)] || 0) + num(r.valor);
+  for (const r of d.receber) if (!ehAvulso(r)) m[String(r.lancamentoId)] = (m[String(r.lancamentoId)] || 0) + num(r.valor);
   return m;
 }
 /* Gasto de verdade: o que foi pago menos o que vai voltar */
@@ -346,7 +362,12 @@ function calcular(d, mes) {
   }
   // A receber: sai da carteira quando se paga, volta quando a pessoa ou a igreja devolve
   let recebido = 0, aReceber = 0;
-  for (const r of d.receber) { if (r.status === 'Recebido') recebido += num(r.valor); else aReceber += num(r.valor); }
+  // Os avulsos não saíram da carteira: só contam quando viram entrada
+  let aReceberAvulso = 0;
+  for (const r of d.receber) {
+    if (ehAvulso(r)) { if (r.status !== 'Recebido') aReceberAvulso += num(r.valor); continue; }
+    if (r.status === 'Recebido') recebido += num(r.valor); else aReceber += num(r.valor);
+  }
   const saldoCofre = {}, rendCofreMes = {};
   let guard = 0, resg = 0, guardMes = 0, resgMes = 0, rendMes = 0;
   for (const m of d.movimentos) {
@@ -365,7 +386,7 @@ function calcular(d, mes) {
   const totalCofres = r2(d.cofrinhos.reduce((s, c) => s + (saldoCofre[String(c.id)] || 0), 0));
   aReceber = r2(aReceber);
   return {
-    carteira, totalCofres, aReceber, total: r2(carteira + totalCofres + aReceber),
+    carteira, totalCofres, aReceber, aReceberAvulso: r2(aReceberAvulso), total: r2(carteira + totalCofres + aReceber),
     entMes: r2(entMes), saiMes: r2(saiMes), saldoMes: r2(entMes - saiMes),
     guardadoMes: r2(guardMes - resgMes), rendMes: r2(rendMes),
     porCat, saldoCofre, rendCofreMes, reservado, pendIgreja, dizimoRes, ofertaRes: r2(reservado - dizimoRes)
@@ -692,7 +713,7 @@ function painel() {
     ${atalho('a1', 'abrirCompromissos', icone.compromisso, 'Compromissos', totComp, detComp, atrasados > 0)}
     ${atalho('a2', 'abrirCofrinhos', icone.porco, 'Cofrinhos', c.totalCofres, nCof ? `${nCof} cofrinho${nCof > 1 ? 's' : ''}` : 'criar o primeiro')}
     ${atalho('a3', 'abrirDizimos', icone.igreja, 'Fidelidade', c.reservado, c.reservado > 0 ? 'a enviar' : 'nada a enviar')}
-    ${atalho('a4', 'abrirReceber', icone.receber, 'A receber', c.aReceber, recAb ? `${recAb} pendente${recAb > 1 ? 's' : ''}` : 'nada pendente')}
+    ${atalho('a4', 'abrirReceber', icone.receber, 'A receber', r2(c.aReceber + c.aReceberAvulso), recAb ? `${recAb} pendente${recAb > 1 ? 's' : ''}` : 'nada pendente')}
   </div>
 
   ${cardPosso()}
@@ -855,7 +876,7 @@ function eventosCarteira(d) {
   for (const m of d.movimentos) {
     if (m.tipo === 'Guardar' || m.tipo === 'Resgatar') ev.push({ quando: String(m.dataHora), tipo: 'mov', m, nome: nomeCofre(m.cofrinhoId), v: m.tipo === 'Guardar' ? -num(m.valor) : num(m.valor) });
   }
-  for (const r of d.receber) if (r.status === 'Recebido') ev.push({ quando: String(r.atualizadoEm || r.dataHora), tipo: 'rec', r, v: num(r.valor) });
+  for (const r of d.receber) if (r.status === 'Recebido' && !ehAvulso(r)) ev.push({ quando: String(r.atualizadoEm || r.dataHora), tipo: 'rec', r, v: num(r.valor) });
   ev.sort((a, b) => a.quando.localeCompare(b.quando));
   let s = num(d.config.saldoInicial);
   for (const e of ev) { s = r2(s + e.v); e.saldo = s; }
@@ -1341,10 +1362,10 @@ function relatorio() {
     <p class="rel-nota">Em cinza, o que mexe na carteira sem ser gasto ou entrada: dinheiro guardado ou resgatado dos cofrinhos e valores recebidos de volta.</p>
 
     <h2>Pendências</h2>
-    <h3>A receber · ${fmt(hoje.aReceber)}</h3>
+    <h3>A receber · ${fmt(r2(hoje.aReceber + hoje.aReceberAvulso))}</h3>
     ${pendRec.length ? `<table class="rel-tab">
       <thead><tr><th>De quem</th><th>Referente a</th><th>Data</th><th>Situação</th><th class="n">Valor</th></tr></thead>
-      <tbody>${pendRec.map(r => { const l = lancDe(r.lancamentoId); return `<tr><td>${r.devedor === 'Igreja' ? 'Igreja (reembolso)' : esc(r.devedor)}</td><td>${esc(l ? l.descricao || l.categoria : '—')}${r.registro ? ' · Nº ' + esc(r.registro) : ''}</td><td>${paraData(r.dataHora).toLocaleDateString('pt-BR')}</td><td>${esc(r.status || 'Pendente')}</td><td class="n">${fmt(r.valor)}</td></tr>`; }).join('')}</tbody>
+      <tbody>${pendRec.map(r => { const l = lancDe(r.lancamentoId); return `<tr><td>${r.devedor === 'Igreja' ? 'Igreja (reembolso)' : esc(r.devedor)}</td><td>${esc(l ? l.descricao || l.categoria : r.obs || 'Valor a receber')}${r.registro ? ' · Nº ' + esc(r.registro) : ''}</td><td>${paraData(r.dataHora).toLocaleDateString('pt-BR')}</td><td>${esc(r.status || 'Pendente')}</td><td class="n">${fmt(r.valor)}</td></tr>`; }).join('')}</tbody>
     </table>` : '<p class="rel-nota">Nada a receber.</p>'}
 
     <h3>Dízimos e ofertas a enviar · ${fmt(hoje.reservado)}</h3>
@@ -1469,6 +1490,7 @@ function lancar() {
 
   return `
   ${cabecalho(edit ? 'Editar lançamento' : 'Novo lançamento', { voltar: edit ? 'fluxo' : S.origem })}
+  ${f.receberAvulsoId ? (r => r ? `<div class="card dica" style="margin:0 0 12px">${icone.receber}<div>Recebimento de <b>${esc(r.devedor)}</b>${r.obs ? ' · ' + esc(r.obs) : ''}. Confira a categoria, a data e o dízimo, e registre a entrada.</div></div>` : '')(S.dados.receber.find(x => mesmoId(x.id, f.receberAvulsoId))) : ''}
   <div class="alterna">
     <button class="saida ${f.tipo === 'Saída' ? 'on' : ''}" data-acao="tipo" data-tipo="Saída">Saída</button>
     <button class="entrada ${f.tipo === 'Entrada' ? 'on' : ''}" data-acao="tipo" data-tipo="Entrada">Entrada</button>
@@ -1930,10 +1952,23 @@ function telaReceber() {
   const recebidos = d.receber.filter(r => r.status === 'Recebido')
     .sort((a, b) => String(b.atualizadoEm).localeCompare(String(a.atualizadoEm))).slice(0, 20);
   const totIgreja = r2((porDevedor.Igreja || []).reduce((s, r) => s + num(r.valor), 0));
+  const totGeral = r2(c.aReceber + c.aReceberAvulso);
 
   const item = (r, comQuem) => {
     const l = lanc(r.lancamentoId);
-    const nome = (comQuem ? (r.devedor === 'Igreja' ? 'Igreja' : r.devedor) + ' · ' : '') + (l ? (l.descricao || l.categoria) : 'Saída');
+    const nome = (comQuem ? (r.devedor === 'Igreja' ? 'Igreja' : r.devedor) + ' · ' : '') + (l ? (l.descricao || l.categoria) : ehAvulso(r) ? (r.obs || 'Valor a receber') : 'Saída');
+    if (ehAvulso(r)) {
+      const prev = r.previsto && r.status !== 'Recebido' ? String(r.previsto).slice(0, 10) : '';
+      const extra = [r.categoria, prev ? 'previsto ' + dataCurta(prev + 'T12:00:00') : dataCurta(r.dataHora)].filter(Boolean).map(esc).join(' · ');
+      const tag = r.status === 'Recebido' ? `<span class="tag-st ok">recebido ${dataCurta(r.atualizadoEm || r.dataHora)}</span>`
+        : prev && prev < hojeIso() ? '<span class="tag-st">atrasado</span>' : '';
+      return `<button class="item" data-acao="itemReceber" data-id="${esc(r.id)}">
+      <span class="meio">
+        <div class="t1">${esc(nome)}${r._pendente ? '<span class="tag-pend">enviando</span>' : ''}</div>
+        <div class="t2">${extra} ${tag}</div>
+      </span>
+      <span class="val num">${fmt(r.valor)}</span></button>`;
+    }
     const igreja = r.devedor === 'Igreja';
     const tag = r.status === 'Recebido' ? `<span class="tag-st ok">recebido ${dataCurta(r.atualizadoEm || r.dataHora)}</span>`
       : igreja ? `<span class="tag-st ${r.status === 'Nota enviada' ? 'env' : ''}">${r.status === 'Nota enviada' ? 'nota enviada' : 'nota pendente'}</span>` : '';
@@ -1953,22 +1988,26 @@ function telaReceber() {
   ${cabecalho('A receber', { voltar: S.origem })}
   <section class="heroi">
     <div class="rotulo">Total a receber</div>
-    <div class="valor-grande num">${fmt(c.aReceber)}</div>
+    <div class="valor-grande num">${fmt(totGeral)}</div>
     <div class="rodape">
-      <div class="mes-saldo"><span>Reembolsos da igreja</span><b class="num">${fmt(totIgreja)}</b></div>
-      <div class="mes-saldo" style="text-align:right"><span>Pessoas</span><b class="num">${fmt(r2(c.aReceber - totIgreja))}</b></div>
+      <div class="mes-saldo"><span>Reembolsos e divisões</span><b class="num">${fmt(c.aReceber)}</b></div>
+      <div class="mes-saldo" style="text-align:right"><span>Outros valores</span><b class="num">${fmt(c.aReceberAvulso)}</b></div>
     </div>
   </section>
-  <p class="muted pequeno" style="margin:10px 2px 0">Já saiu da carteira, não conta como seu gasto e entra no saldo total. Quando receber, o valor volta para a carteira.</p>
+  <p class="muted pequeno" style="margin:10px 2px 0">Reembolsos e divisões já saíram da carteira e entram no saldo total; quando receber, voltam para a carteira. Outros valores (como um serviço) só contam quando você recebe, como uma entrada.</p>
+  ${d.versao >= 5 ? '<button class="btn tracejado" data-acao="novoReceber">+ Novo valor a receber</button>'
+    : `<div class="card dica">${icone.dica}<div>Para cadastrar outros valores a receber, cole o novo <b>apps-script/Codigo.gs</b> no Apps Script e publique uma nova versão.</div></div>`}
 
   ${nomes.length ? nomes.map(n => {
     const rs = porDevedor[n].sort((a, b) => String(b.dataHora).localeCompare(String(a.dataHora)));
     const tot = r2(rs.reduce((s, r) => s + num(r.valor), 0));
+    // "Recebi tudo" vale só para reembolsos e divisões; os outros valores viram entrada um por um
+    const deSaidas = rs.filter(r => !ehAvulso(r));
     return `
   <div class="h2-linha"><h2>${n === 'Igreja' ? 'Reembolsos da igreja' : esc(n)} · ${fmt(tot)}</h2>
-    <button class="link-btn" data-acao="mudarReceber" data-status="Recebido" data-ids="${esc(rs.map(r => r.id).join(','))}">Recebi tudo</button></div>
+    ${deSaidas.length > 1 || (deSaidas.length && deSaidas.length === rs.length) ? `<button class="link-btn" data-acao="mudarReceber" data-status="Recebido" data-ids="${esc(deSaidas.map(r => r.id).join(','))}">${deSaidas.length === rs.length ? 'Recebi tudo' : 'Recebi os reembolsos'}</button>` : ''}</div>
   <div class="lista">${rs.map(r => item(r)).join('')}</div>`;
-  }).join('') : `<div class="card vazio" style="margin-top:14px">Nada a receber. Ao registrar uma saída, ligue "Receber de volta".</div>`}
+  }).join('') : `<div class="card vazio" style="margin-top:14px">Nada a receber. Cadastre um valor acima, ou ligue "Receber de volta" ao registrar uma saída.</div>`}
 
   ${recebidos.length ? `
   <h2>Recebidos</h2>
@@ -1977,6 +2016,7 @@ function telaReceber() {
 
 function folhaItemReceber(id) {
   const r = S.dados.receber.find(x => String(x.id) === String(id)); if (!r) return;
+  if (ehAvulso(r)) return folhaAvulso(r);
   const l = S.dados.lancamentos.find(x => String(x.id) === String(r.lancamentoId));
   const igreja = r.devedor === 'Igreja';
   const op = (st, txt, cls = '') => `<button class="menu-op ${cls}" data-acao="mudarReceber" data-status="${st}" data-ids="${esc(r.id)}">${txt}</button>`;
@@ -1992,6 +2032,44 @@ function folhaItemReceber(id) {
     ${acoes}
     ${l ? `<button class="menu-op" data-acao="editarLanc" data-id="${esc(l.id)}">${icone.lapis} Editar a saída</button>` : ''}
     <button class="btn secundario" data-acao="fecharFolha">Fechar</button>`);
+}
+
+/* Valor a receber avulso: receber (vira entrada), editar ou excluir */
+function folhaAvulso(r) {
+  const prev = r.previsto ? String(r.previsto).slice(0, 10) : '';
+  const info = [r.obs, r.categoria, prev && r.status !== 'Recebido' ? 'previsto para ' + dataCurta(prev + 'T12:00:00') : '', 'cadastrado em ' + dataCurta(r.dataHora)].filter(Boolean).map(esc).join(' · ');
+  abrirFolha(`
+    <h3>${esc(r.devedor)} · ${fmt(r.valor)}</h3>
+    <p class="muted pequeno" style="margin:0 0 6px">${info}</p>
+    ${r.status === 'Recebido' ? `
+    <p class="pequeno" style="margin:10px 2px">Recebido em ${dataCurta(r.atualizadoEm || r.dataHora)}. Para desfazer, exclua a entrada: o valor volta a ficar a receber.</p>
+    ${r.entradaId ? `<button class="menu-op" data-acao="verLanc" data-id="${esc(r.entradaId)}">${icone.sobe} Ver a entrada</button>` : ''}` : `
+    <button class="menu-op" data-acao="receberAvulso" data-id="${esc(r.id)}">${icone.sobe} Recebi: registrar a entrada</button>
+    <button class="menu-op" data-acao="editarReceber" data-id="${esc(r.id)}">${icone.lapis} Editar</button>
+    <button class="menu-op perigo" data-acao="excluirReceber" data-id="${esc(r.id)}">${icone.lixo} Excluir</button>`}
+    <button class="btn secundario" data-acao="fecharFolha">Fechar</button>`);
+}
+
+function folhaNovoReceber(id) {
+  const r = id ? S.dados.receber.find(x => mesmoId(x.id, id)) : null;
+  const v = r ? Math.round(num(r.valor) * 100) : 0;
+  const cat = r ? r.categoria : '';
+  abrirFolha(`
+    <h3>${r ? 'Editar valor a receber' : 'Novo valor a receber'}</h3>
+    <p class="muted pequeno" style="margin:0 0 4px">Quando a pessoa pagar, você registra como uma entrada.</p>
+    <label class="rotulo-campo" for="inRecQuem">Quem vai pagar</label>
+    <input id="inRecQuem" class="campo" list="recPessoas" placeholder="Nome da pessoa ou empresa" value="${esc(r ? r.devedor : '')}" autocomplete="off">
+    <datalist id="recPessoas">${devedoresConhecidos().map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+    <label class="rotulo-campo" for="inRecValor">Valor</label>
+    <input id="inRecValor" class="campo" data-dinheiro inputmode="numeric" placeholder="R$ 0,00" autocomplete="off" data-centavos="${v}" value="${v ? fmt(v / 100) : ''}">
+    <label class="rotulo-campo" for="inRecObs">Referente a <span class="muted">(opcional)</span></label>
+    <input id="inRecObs" class="campo" placeholder="Ex.: conserto do computador, aula de violão" value="${esc(r ? r.obs : '')}" autocomplete="off">
+    <span class="rotulo-campo">Categoria da entrada <span class="muted">(opcional)</span></span>
+    <div class="chips" id="recCats">${categorias('Entrada').map(x => `<button class="chip pequeno ${cat === x.nome ? 'on' : ''}" data-acao="recCat" data-nome="${esc(x.nome)}"><span class="bolinha" style="background:${x.cor}"></span>${esc(x.nome)}</button>`).join('')}</div>
+    <label class="rotulo-campo" for="inRecPrev">Previsão de pagamento <span class="muted">(opcional)</span></label>
+    <input id="inRecPrev" class="campo" type="date" value="${r && r.previsto ? String(r.previsto).slice(0, 10) : ''}">
+    <button class="btn" data-acao="salvarReceber" data-id="${esc(r ? r.id : '')}">${r ? 'Salvar' : 'Cadastrar'}</button>
+    <button class="btn secundario" data-acao="fecharFolha">Cancelar</button>`, () => { if (!r) $('#inRecQuem').focus(); });
 }
 
 /* Toque num lançamento: abre só para ver; editar fica no botão do lápis */
@@ -2020,6 +2098,7 @@ function folhaVerLanc(id) {
       ${l.registro ? linha('Registro', 'Nº ' + esc(l.registro)) : ''}
       ${sep && origem ? linha('Separado da entrada', `${esc(origem.descricao || origem.categoria)} · ${fmt(origem.valor)}`) : ''}
       ${sep ? linha('Situação', l.envioId ? 'Já enviado à igreja' : 'Reservado, a enviar') : ''}
+      ${(r => r ? linha('Veio de', `A receber · ${esc(r.devedor)}`) : '')(ent && d.receber.find(r => mesmoId(r.entradaId, l.id)))}
     </div>
     ${seps.length ? `<div class="secao">Separado para a igreja</div>
     <div class="card ver-dados">${seps.map(x => linha(esc(x.parte), `${fmt(x.valor)}${x.envioId ? ' · enviado' : ''}`)).join('')}</div>` : ''}
@@ -2205,8 +2284,10 @@ const ACOES = {
     const recAntes = f.id ? S.dados.receber.filter(r => String(r.lancamentoId) === String(f.id)) : [];
     if (comReceber && f.receber.modo !== 'nao' && !f.id) dados.receber = montarReceber(f);
 
+    if (f.receberAvulsoId && f.tipo !== 'Entrada') return avisar('O recebimento de um valor a receber é uma entrada.', true);
     if (!f.id) {
-      enfileirar({ acao: 'addLancamento', dados });
+      if (f.receberAvulsoId) enfileirar({ acao: 'receberAvulso', dados: { id: f.receberAvulsoId, entrada: dados } });
+      else enfileirar({ acao: 'addLancamento', dados });
       if (f.compromissoId) enfileirar({ acao: 'pagarCompromisso', dados: { id: f.compromissoId, lancamentoId: dados.id, dataHora: dados.dataHora } });
       avisar(f.tipo === 'Saída' ? `Saída de ${fmt(dados.valor)} registrada${dados.receber ? ` · ${fmt(dados.receber.reduce((s, r) => s + r.valor, 0))} a receber` : ''}${avisoOrcamento(dados.categoria, dados.dataHora.slice(0, 7))}`
         : `Entrada de ${fmt(dados.valor)} registrada${dados.separacoes ? ` · ${fmt(dados.separacoes.reduce((s, x) => s + x.valor, 0))} separado para a igreja` : ''}`);
@@ -2329,6 +2410,31 @@ const ACOES = {
     atualizarCaixaReceber();
   },
   itemReceber(el) { folhaItemReceber(el.dataset.id); },
+  novoReceber() { folhaNovoReceber(null); },
+  editarReceber(el) { folhaNovoReceber(el.dataset.id); },
+  recCat(el) { const on = !el.classList.contains('on'); $$('#recCats .chip').forEach(b => b.classList.remove('on')); el.classList.toggle('on', on); },
+  async salvarReceber(el) {
+    const id = el.dataset.id;
+    const dados = {
+      id: id || uid(), dataHora: isoLocal(), devedor: $('#inRecQuem').value.trim(), valor: centavosDe($('#inRecValor')) / 100,
+      obs: $('#inRecObs').value.trim(), categoria: ($('#recCats .chip.on') || { dataset: {} }).dataset.nome || '', previsto: $('#inRecPrev').value
+    };
+    if (!dados.devedor) return avisar('Informe quem vai pagar.', true);
+    if (!dados.valor) return avisar('Informe o valor.', true);
+    if (await executar(id ? 'editReceber' : 'addReceber', dados, id ? 'Valor a receber atualizado' : `${fmt(dados.valor)} a receber de ${dados.devedor}`)) { fecharFolha(); render(); }
+  },
+  async excluirReceber(el) {
+    if (!confirm('Excluir este valor a receber?')) return;
+    if (await executar('delReceber', { id: el.dataset.id }, 'Valor a receber excluído')) { fecharFolha(); render(); }
+  },
+  receberAvulso(el) {
+    const r = S.dados.receber.find(x => mesmoId(x.id, el.dataset.id)); if (!r) return;
+    fecharFolha();
+    S.origem = 'receber';
+    S.form = { ...novoForm(), tipo: 'Entrada', centavos: Math.round(num(r.valor) * 100), descricao: r.obs || 'Recebido de ' + r.devedor,
+      categoria: r.categoria || null, catManual: !!r.categoria, receberAvulsoId: r.id };
+    S.view = 'lancar'; render(); window.scrollTo(0, 0);
+  },
   async mudarReceber(el) {
     const ids = el.dataset.ids.split(',');
     const st = el.dataset.status;
