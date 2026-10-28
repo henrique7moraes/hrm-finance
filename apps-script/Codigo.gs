@@ -6,7 +6,7 @@
  * 3. Implante como "App da Web" (Executar como: Eu | Quem pode acessar: Qualquer pessoa).
  */
 const PIN = '0000';
-const VERSAO = 5;
+const VERSAO = 6;
 const CAT_DIZIMO = 'Dízimos e ofertas';
 
 const ABAS = {
@@ -200,6 +200,26 @@ function executar_(acao, d) {
       const id = d.id || novoId_();
       anexar_('EnviosIgreja', { id: id, dataHora: d.dataHora || agora_(), dizimo: soma('Dízimo'), oferta: soma('Oferta'), obs: d.obs || '' });
       pendentes.forEach(l => atualizar_('Lancamentos', l.id, { envioId: id }));
+      return;
+    }
+
+    case 'separarAvulso': {
+      // Dízimo e oferta lançados direto na Fidelidade, sem uma entrada: o "grupo" faz o papel da entrada (origemId)
+      if (!d.grupo) throw new Error('Lançamento inválido.');
+      const atuais = separacoesDe_(d.grupo);
+      if (atuais.some(sp => sp.envioId)) throw new Error('Este valor já foi enviado à igreja.');
+      let registro = atuais.length ? atuais[0].registro : '';
+      atuais.forEach(sp => remover_('Lancamentos', sp.id));
+      [['Dízimo', d.dizimo, d.idDizimo], ['Oferta', d.oferta, d.idOferta]].forEach(([parte, valor, id]) => {
+        if (!(num_(valor) > 0)) return;
+        validarValor_(valor);
+        const nova = anexar_('Lancamentos', {
+          id: id || novoId_(), dataHora: d.dataHora || agora_(), tipo: 'Saída', valor: num_(valor), categoria: CAT_DIZIMO,
+          pagamento: '', descricao: parte + ' · ' + (String(d.descricao || '').trim() || 'Lançado na Fidelidade'),
+          registro: registro, origemId: d.grupo, parte: parte
+        });
+        registro = nova.registro;  // dízimo e oferta com o mesmo número
+      });
       return;
     }
 
