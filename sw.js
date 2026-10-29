@@ -1,5 +1,5 @@
 // HRM Finance — service worker (deixa o app abrir rápido e instalável)
-const VERSAO = 'hrm-v8';
+const VERSAO = 'hrm-v9';
 const ARQUIVOS = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest',
   'icon.svg', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png', 'favicon.png'];
 

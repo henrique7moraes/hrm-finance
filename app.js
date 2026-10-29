@@ -2,7 +2,7 @@
 /* HRM Finance — app de controle financeiro pessoal
    Dados: Google Sheets (via Apps Script). Telas: este arquivo. */
 
-const VERSAO_APP = '2.4';
+const VERSAO_APP = '2.5';
 const NOME = 'Henrique';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
@@ -23,6 +23,8 @@ const CAT_DIZIMO = 'Dízimos e ofertas';
 /* Dízimo = 10% arredondado para cima no centavo; a oferta começa igual ao dízimo e pode ser mudada */
 const dizimoDe = v => Math.ceil(Math.round(num(v) * 100) / 10) / 100;
 const ehSeparacao = l => !!l.origemId;
+// Dízimo/oferta lançado direto na Fidelidade: não há entrada de origem (o origemId é só o grupo do dízimo + oferta)
+const ehSepAvulsa = (d, l) => ehSeparacao(l) && !d.lancamentos.some(x => String(x.id) === String(l.origemId));
 // Valor a receber avulso (ex.: um serviço): não veio de uma saída; quando pago, vira uma entrada
 const ehAvulso = r => !r.lancamentoId;
 const CORES = ['#F2994A', '#56CCF2', '#F2C94C', '#BB6BD9', '#27AE60', '#6FCF97', '#EB5757', '#2D9CDB',
@@ -215,6 +217,16 @@ const PENDENTES = {
   desfazerEnvio(d, f) {
     d.lancamentos = d.lancamentos.map(l => mesmoId(l.envioId, f.id) ? { ...l, envioId: '', _pendente: true } : l);
     d.envios = d.envios.filter(e => !mesmoId(e.id, f.id));
+  },
+  separarAvulso(d, f) {
+    const atuais = d.lancamentos.filter(l => ehSeparacao(l) && mesmoId(l.origemId, f.grupo));
+    if (atuais.some(l => l.envioId)) return;
+    const registro = (atuais[0] || {}).registro || '';
+    d.lancamentos = d.lancamentos.filter(l => !atuais.includes(l));
+    [['Dízimo', f.dizimo, f.idDizimo], ['Oferta', f.oferta, f.idOferta]].forEach(([parte, valor, id]) => {
+      if (num(valor) > 0) d.lancamentos.push({ id, dataHora: f.dataHora, tipo: 'Saída', valor: num(valor), categoria: CAT_DIZIMO, pagamento: '',
+        descricao: parte + ' · ' + (String(f.descricao || '').trim() || 'Lançado na Fidelidade'), registro, origemId: f.grupo, parte, _pendente: true });
+    });
   }
 };
 function recalcular() { S.dados = mesclarFila(S.base); }
@@ -245,7 +257,7 @@ function marcarOcupado(v) { ocupado = v; document.body.classList.toggle('ocupado
 
 /* Alterações que funcionam sem internet: ficam guardadas no aparelho e sobem na ordem em que foram feitas */
 const NA_FILA = new Set(['addReceber', 'editReceber', 'delReceber', 'editLancamento', 'delLancamento', 'addCompromisso', 'editCompromisso', 'delCompromisso', 'statusReceber',
-  'setConfig', 'editCofrinho', 'movCofrinho', 'atualizarSaldo', 'enviarIgreja', 'desfazerEnvio']);
+  'setConfig', 'editCofrinho', 'movCofrinho', 'atualizarSaldo', 'enviarIgreja', 'desfazerEnvio', 'separarAvulso']);
 
 async function executar(acao, dados, msgOk) {
   if (ocupado) return false;
@@ -1891,21 +1903,23 @@ function dizimos() {
   </section>
   <p class="muted pequeno" style="margin:10px 2px 0">Esse valor já saiu da carteira e não entra no saldo total.</p>
   ${c.reservado > 0 ? `<button class="btn" data-acao="enviarIgreja">Enviei para a igreja</button>` : ''}
+  ${d.versao >= 6 ? `<button class="btn ${c.reservado > 0 ? 'secundario' : ''}" data-acao="novoSepAvulso">+ Lançar dízimo ou oferta</button>` : ''}
 
   <h2>A enviar</h2>
   <div class="lista">${pend.length ? pend.map(g => {
     const o = acharOrigem(g.origemId);
-    const nome = o ? (o.descricao || o.categoria) : 'Entrada';
-    const reg = o && o.registro ? `Nº ${esc(o.registro)} · ` : '';
+    const it = c.pendIgreja.find(l => mesmoId(l.id, g.idItem)) || {};
+    const nome = o ? (o.descricao || o.categoria) : String(it.descricao || '').replace(/^(Dízimo|Oferta) · /, '') || 'Lançado na Fidelidade';
+    const reg = (o || it).registro ? `Nº ${esc((o || it).registro)} · ` : '';
     return `<button class="item" data-acao="verLanc" data-id="${esc(g.idItem)}">
       <span class="ico" style="background:${corCat('Saída', CAT_DIZIMO)}26;color:${corCat('Saída', CAT_DIZIMO)}">D</span>
       <span class="meio">
         <div class="t1">${esc(nome)}${g.pendente ? '<span class="tag-pend">enviando</span>' : ''}</div>
-        <div class="t2">${reg}${dataCurta(g.dataHora)}${o ? ' · entrada de ' + fmt(o.valor) : ''}</div>
+        <div class="t2">${reg}${dataCurta(g.dataHora)}${o ? ' · entrada de ' + fmt(o.valor) : ' · lançado aqui'}</div>
         <div class="t2">Dízimo ${fmt(g.dizimo)} + oferta ${fmt(g.oferta)}</div>
       </span>
       <span class="val num">${fmt(g.dizimo + g.oferta)}</span></button>`;
-  }).join('') : '<div class="card vazio">Nada separado agora. Ao registrar uma entrada, ligue o dízimo ou a oferta.</div>'}</div>
+  }).join('') : '<div class="card vazio">Nada separado agora. Ao registrar uma entrada, ligue o dízimo ou a oferta, ou lance um valor aqui.</div>'}</div>
 
   ${envios.length ? `
   <h2>Enviados à igreja</h2>
@@ -1929,6 +1943,32 @@ function folhaEnviar() {
     </div>
     <button class="btn" data-acao="confirmarEnvio">Confirmar envio</button>
     <button class="btn secundario" data-acao="fecharFolha">Cancelar</button>`);
+}
+
+/* Dízimo e oferta lançados direto aqui (ex.: de um rendimento esquecido). Saem da carteira e ficam a enviar. */
+function folhaSepAvulso(grupo) {
+  const seps = grupo ? S.dados.lancamentos.filter(l => ehSeparacao(l) && mesmoId(l.origemId, grupo)) : [];
+  const parte = p => seps.find(l => l.parte === p);
+  const cent = p => parte(p) ? Math.round(num(parte(p).valor) * 100) : 0;
+  const campoValor = (id, c) => `<input id="${id}" class="campo" data-dinheiro inputmode="numeric" placeholder="R$ 0,00" autocomplete="off" data-centavos="${c}" value="${c ? fmt(c / 100) : ''}">`;
+  const desc = seps.length ? String(seps[0].descricao || '').replace(/^(Dízimo|Oferta) · /, '') : '';
+  const dia = (seps.length ? String(seps[0].dataHora) : isoLocal()).slice(0, 10);
+  abrirFolha(`
+    <h3>${seps.length ? 'Editar dízimo e oferta' : 'Lançar dízimo ou oferta'}</h3>
+    <p class="muted pequeno" style="margin:0 0 4px">O valor sai da carteira agora e fica em "A enviar", junto com o resto, até você enviar para a igreja.</p>
+    ${seps.length ? '' : `<label class="rotulo-campo" for="inSepBase">Calcular pelo valor recebido <span class="muted">(opcional)</span></label>
+    <input id="inSepBase" class="campo" data-dinheiro inputmode="numeric" placeholder="Ex.: o rendimento do mês" autocomplete="off">`}
+    <div class="linha-dupla">
+      <div><label class="rotulo-campo" for="inSepDizimo">Dízimo</label>${campoValor('inSepDizimo', cent('Dízimo'))}</div>
+      <div><label class="rotulo-campo" for="inSepOferta">Oferta</label>${campoValor('inSepOferta', cent('Oferta'))}</div>
+    </div>
+    <label class="rotulo-campo" for="inSepDesc">Referente a <span class="muted">(opcional)</span></label>
+    <input id="inSepDesc" class="campo" placeholder="Ex.: rendimento de setembro" value="${esc(desc === 'Lançado na Fidelidade' ? '' : desc)}" autocomplete="off">
+    <label class="rotulo-campo" for="inSepData">Data</label>
+    <input id="inSepData" class="campo" type="date" value="${esc(dia)}">
+    <button class="btn" data-acao="salvarSepAvulso" data-grupo="${esc(grupo || '')}">${seps.length ? 'Salvar' : 'Lançar'}</button>
+    ${seps.length ? `<button class="menu-op perigo" data-acao="excluirSepAvulso" data-grupo="${esc(grupo)}">${icone.lixo} Excluir</button>` : ''}
+    <button class="btn secundario" data-acao="fecharFolha">Cancelar</button>`, () => { const i = $(seps.length ? '#inSepDizimo' : '#inSepBase'); if (i) i.focus(); });
 }
 
 function folhaMenuEnvio(id) {
@@ -2097,6 +2137,7 @@ function folhaVerLanc(id) {
       ${linha('Data', `${esc(maiuscula(quando))} · ${hora(l.dataHora)}`)}
       ${l.registro ? linha('Registro', 'Nº ' + esc(l.registro)) : ''}
       ${sep && origem ? linha('Separado da entrada', `${esc(origem.descricao || origem.categoria)} · ${fmt(origem.valor)}`) : ''}
+      ${sep && !origem ? linha('Origem', 'Lançado na Fidelidade') : ''}
       ${sep ? linha('Situação', l.envioId ? 'Já enviado à igreja' : 'Reservado, a enviar') : ''}
       ${(r => r ? linha('Veio de', `A receber · ${esc(r.devedor)}`) : '')(ent && d.receber.find(r => mesmoId(r.entradaId, l.id)))}
     </div>
@@ -2324,6 +2365,7 @@ const ACOES = {
   editarLanc(el) {
     let l = S.dados.lancamentos.find(x => String(x.id) === el.dataset.id);
     if (!l) return;
+    if (ehSepAvulsa(S.dados, l) && !l.envioId) return folhaSepAvulso(l.origemId);  // troca a folha aberta, sem fechar
     fecharFolha();
     if (ehSeparacao(l)) {
       // Dízimo e oferta seguem a entrada: para mudar, edita-se a entrada
@@ -2447,6 +2489,26 @@ const ACOES = {
     if (await executar('enviarIgreja', { id: uid(), dataHora: isoLocal() }, `${fmt(v)} enviado para a igreja`)) { fecharFolha(); render(); }
   },
   menuEnvio(el) { folhaMenuEnvio(el.dataset.id); },
+  novoSepAvulso() { folhaSepAvulso(null); },
+  async salvarSepAvulso(el) {
+    const grupo = el.dataset.grupo;
+    const seps = grupo ? S.dados.lancamentos.filter(l => ehSeparacao(l) && mesmoId(l.origemId, grupo)) : [];
+    const idDe = p => (seps.find(l => l.parte === p) || {}).id || uid();
+    const dia = $('#inSepData').value || isoLocal().slice(0, 10);
+    const antes = seps.length ? String(seps[0].dataHora) : '';
+    const dados = {
+      grupo: grupo || uid(), idDizimo: idDe('Dízimo'), idOferta: idDe('Oferta'),
+      dizimo: centavosDe($('#inSepDizimo')) / 100, oferta: centavosDe($('#inSepOferta')) / 100, descricao: $('#inSepDesc').value.trim(),
+      // Mantém a hora se o dia não mudou; num dia novo, usa a hora de agora
+      dataHora: antes.slice(0, 10) === dia ? antes : dia + isoLocal().slice(10)
+    };
+    if (!(dados.dizimo + dados.oferta > 0)) return avisar('Informe o valor do dízimo ou da oferta.', true);
+    if (await executar('separarAvulso', dados, grupo ? 'Dízimo e oferta atualizados' : `${fmt(r2(dados.dizimo + dados.oferta))} separado para a igreja`)) { fecharFolha(); render(); }
+  },
+  async excluirSepAvulso(el) {
+    if (!confirm('Excluir este dízimo e oferta? O valor volta para a carteira.')) return;
+    if (await executar('separarAvulso', { grupo: el.dataset.grupo, dizimo: 0, oferta: 0 }, 'Excluído')) { fecharFolha(); render(); }
+  },
   async desfazerEnvio(el) {
     if (!confirm('Desfazer este envio? Os valores voltam a ficar reservados.')) return;
     if (await executar('desfazerEnvio', { id: el.dataset.id }, 'Envio desfeito')) { fecharFolha(); render(); }
@@ -2597,6 +2659,11 @@ document.addEventListener('input', e => {
   }
   if (t.id === 'inDesc') sugerirCategoria(t.value);
   if (t.id === 'inSaldoNovo') atualizarDif();
+  if (t.id === 'inSepBase') {
+    // Dízimo = 10% arredondado para cima; oferta sugerida igual ao dízimo
+    const c = Math.round(dizimoDe(centavosDe(t) / 100) * 100);
+    ['#inSepDizimo', '#inSepOferta'].forEach(s => { const i = $(s); i.dataset.centavos = c; i.value = c ? fmt(c / 100) : ''; });
+  }
   if (t.id === 'inBusca') { S.busca = t.value; const l = $('#fluxoLista'); if (l) l.innerHTML = listaFluxo(); }
   if (t.dataset.recNome !== undefined && S.form) S.form.receber.pessoas[+t.dataset.recNome].nome = t.value;
   if (t.dataset.recValor !== undefined && S.form) {
