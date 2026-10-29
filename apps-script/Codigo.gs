@@ -5,7 +5,7 @@
  * 2. Salve, selecione a função "configurar" e clique em Executar (uma vez).
  * 3. Implante como "App da Web" (Executar como: Eu | Quem pode acessar: Qualquer pessoa).
  */
-const PIN = '18444481';
+const PIN = '0000';
 const VERSAO = 6;
 const CAT_DIZIMO = 'Dízimos e ofertas';
 
