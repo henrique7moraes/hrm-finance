@@ -2,7 +2,7 @@
 /* HRM Finance — app de controle financeiro pessoal
    Dados: Google Sheets (via Apps Script). Telas: este arquivo. */
 
-const VERSAO_APP = '2.5';
+const VERSAO_APP = '2.6';
 const NOME = 'Henrique';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
@@ -255,13 +255,14 @@ async function chamar(acao, dados = {}, pin = S.pin, url = S.url) {
 let ocupado = false;
 function marcarOcupado(v) { ocupado = v; document.body.classList.toggle('ocupado', v); }
 
-/* Alterações que funcionam sem internet: ficam guardadas no aparelho e sobem na ordem em que foram feitas */
+/* Alterações que funcionam sem internet: aparecem na hora, ficam guardadas no aparelho e sobem por trás, na ordem em que foram feitas
+   (mesmo com internet, para não esperar a planilha responder) */
 const NA_FILA = new Set(['addReceber', 'editReceber', 'delReceber', 'editLancamento', 'delLancamento', 'addCompromisso', 'editCompromisso', 'delCompromisso', 'statusReceber',
   'setConfig', 'editCofrinho', 'movCofrinho', 'atualizarSaldo', 'enviarIgreja', 'desfazerEnvio', 'separarAvulso']);
 
 async function executar(acao, dados, msgOk) {
   if (ocupado) return false;
-  if (NA_FILA.has(acao) && (S.fila.length || !navigator.onLine)) return guardarNaFila(acao, dados, msgOk);
+  if (NA_FILA.has(acao)) return guardarNaFila(acao, dados, msgOk);
   marcarOcupado(true);
   try {
     receber(await chamar(acao, dados));
@@ -269,7 +270,6 @@ async function executar(acao, dados, msgOk) {
     if (msgOk) avisar(msgOk);
     return true;
   } catch (e) {
-    if (e.offline && NA_FILA.has(acao)) { S.status = 'offline'; return guardarNaFila(acao, dados, msgOk); }
     tratarErro(e);
     return false;
   } finally {
