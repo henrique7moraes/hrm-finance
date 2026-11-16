@@ -2,7 +2,7 @@
 /* HRM Finance — app de controle financeiro pessoal
    Dados: Google Sheets (via Apps Script). Telas: este arquivo. */
 
-const VERSAO_APP = '2.6';
+const VERSAO_APP = '2.7';
 const NOME = 'Henrique';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
@@ -41,6 +41,31 @@ const PALAVRAS = {
   'Presente': ['presente', 'aniversario'],
   'Subsídio': ['subsidio', 'bolsa', 'ajuda de custo', 'auxilio']
 };
+
+/* Ícone de cada categoria, pelo nome (categorias novas sem ícone conhecido ficam com a inicial) */
+const SVG_CAT = p => `<svg viewBox="0 0 24 24">${p}</svg>`;
+const ICONES_CAT = [
+  [/aliment|mercado|comida|refei/, SVG_CAT('<circle cx="9" cy="20" r="1.4"/><circle cx="18" cy="20" r="1.4"/><path d="M2.5 3h2.6l2.6 12.2a2 2 0 0 0 2 1.6h7.9a2 2 0 0 0 1.9-1.5L21 7H6.1"/>')],
+  [/transport|carro|combust|uber|moto/, SVG_CAT('<path d="M5 17h14M5 17a2 2 0 1 0 4 0M15 17a2 2 0 1 0 4 0"/><path d="M3 17v-4.5l2.2-5A2 2 0 0 1 7 6.3h10a2 2 0 0 1 1.8 1.2l2.2 5V17"/><path d="M3.5 12h17"/>')],
+  [/dizimo|oferta|igreja/, null],
+  [/lazer|social|passeio|divers/, SVG_CAT('<path d="M3 9a2 2 0 0 0 0 6v3a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1v-3a2 2 0 0 0 0-6V6a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1z"/><path d="M14 5v2M14 11v2M14 17v2"/>')],
+  [/salario|trabalho|pro-?labore/, SVG_CAT('<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 13h18"/>')],
+  [/rendimento|juros|invest/, SVG_CAT('<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>')],
+  [/presente|doacao/, SVG_CAT('<rect x="3" y="8" width="18" height="4" rx="1"/><path d="M12 8v13M19 12v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7"/><path d="M7.5 8a2.5 2.5 0 0 1 0-5C10 3 12 8 12 8s2-5 4.5-5a2.5 2.5 0 0 1 0 5"/>')],
+  [/subsidio|auxilio|bolsa|ajuda/, SVG_CAT('<path d="M19 14c1.5-1.5 3-3.2 3-5.5A5.5 5.5 0 0 0 12 5.3 5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4 3 5.5l7 7z"/>')],
+  [/saude|farmacia|remedio|medic|consulta|exame/, SVG_CAT('<path d="M19 14c1.5-1.5 3-3.2 3-5.5A5.5 5.5 0 0 0 12 5.3 5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4 3 5.5l7 7z"/><path d="M3.5 12h5l1.5-3 3 6 1.5-3h6"/>')],
+  [/educa|escola|curso|livro|faculdade/, SVG_CAT('<path d="M22 10L12 5 2 10l10 5 10-5z"/><path d="M6 12v5c3 2 9 2 12 0v-5"/>')],
+  [/moradia|casa|aluguel|condominio/, SVG_CAT('<path d="M3 10.5L12 3l9 7.5"/><path d="M5 9v11h14V9"/><path d="M10 20v-6h4v6"/>')],
+  [/conta|servico|celular|telefone|internet|luz|energia|agua|assinatura/, SVG_CAT('<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>')],
+  [/roupa|vestu|calcado/, SVG_CAT('<path d="M20.4 6.6L16 4a4 4 0 0 1-8 0L3.6 6.6a1 1 0 0 0-.5 1.2l1 3a1 1 0 0 0 1.2.6L7 11v9a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-9l1.7.4a1 1 0 0 0 1.2-.6l1-3a1 1 0 0 0-.5-1.2z"/>')],
+  [/pet|animal|racao/, SVG_CAT('<circle cx="11" cy="4.5" r="2"/><circle cx="18" cy="8.5" r="2"/><circle cx="4.5" cy="9" r="2"/><path d="M8.5 14.5c1-3 5-3 6 0l1 2.5a2.5 2.5 0 0 1-3 3.3 4 4 0 0 0-2 0 2.5 2.5 0 0 1-3-3.3z"/>')]
+];
+function icoCat(nome) {
+  const n = normalizar(nome);
+  const achado = ICONES_CAT.find(([re]) => re.test(n));
+  if (achado) return achado[1] || icone.igreja;
+  return esc((nome || '?').charAt(0).toUpperCase());
+}
 
 /* ---------- armazenamento local ---------- */
 function lsGet(k, def) { try { const v = localStorage.getItem(k); return v === null ? def : JSON.parse(v); } catch { return def; } }
@@ -439,7 +464,7 @@ function mostrarMolde(v) {
 function aplicarTema() {
   document.documentElement.dataset.tema = S.tema === 'escuro' ? 'escuro' : 'claro';
   const m = $('meta[name="theme-color"]');
-  if (m) m.content = S.tema === 'escuro' ? '#0B1426' : '#F4F6FA';
+  if (m) m.content = S.tema === 'escuro' ? '#03111A' : '#EEF3F4';
 }
 
 const saudacao = () => { const h = new Date().getHours(); return h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite'; };
@@ -513,8 +538,11 @@ function render() {
   if (S.view === 'lancar' && !S.form) S.form = novoForm();
   const views = { painel, fluxo, lancar, analise, economias, dizimos, receber: telaReceber,
     orcamento: telaOrcamento, compromissos: telaCompromissos };
-  $('#tela').dataset.tela = views[S.view] ? S.view : 'painel';
-  $('#tela').innerHTML = (views[S.view] || painel)();
+  const tela = views[S.view] ? S.view : 'painel', main = $('#tela');
+  main.dataset.tela = tela;
+  main.innerHTML = (views[S.view] || painel)();
+  // Entrada suave só ao trocar de tela (as atualizações automáticas não repetem a animação)
+  if (main.dataset.anim !== tela) { main.dataset.anim = tela; main.classList.remove('anima'); void main.offsetWidth; main.classList.add('anima'); }
   $$('#nav [data-view]').forEach(b => b.classList.toggle('ativo', b.dataset.view === S.view));
   atualizarSync();
 }
@@ -622,7 +650,7 @@ function itemLanc(l) {
     volta ? fmt(volta) + ' a receber' : ''].filter(Boolean).map(esc).join(' · ');
   return `
   <button class="item" data-acao="verLanc" data-id="${esc(l.id)}">
-    <span class="ico" style="background:${cor}26;color:${cor}">${esc((l.categoria || '?').charAt(0).toUpperCase())}</span>
+    <span class="ico" style="background:${cor}26;color:${cor}">${icoCat(l.categoria)}</span>
     <span class="meio">
       <div class="t1">${t1}${l._pendente ? '<span class="tag-pend">enviando</span>' : ''}</div>
       <div class="t2">${extras}</div>
@@ -1912,7 +1940,7 @@ function dizimos() {
     const nome = o ? (o.descricao || o.categoria) : String(it.descricao || '').replace(/^(Dízimo|Oferta) · /, '') || 'Lançado na Fidelidade';
     const reg = (o || it).registro ? `Nº ${esc((o || it).registro)} · ` : '';
     return `<button class="item" data-acao="verLanc" data-id="${esc(g.idItem)}">
-      <span class="ico" style="background:${corCat('Saída', CAT_DIZIMO)}26;color:${corCat('Saída', CAT_DIZIMO)}">D</span>
+      <span class="ico" style="background:${corCat('Saída', CAT_DIZIMO)}26;color:${corCat('Saída', CAT_DIZIMO)}">${icone.igreja}</span>
       <span class="meio">
         <div class="t1">${esc(nome)}${g.pendente ? '<span class="tag-pend">enviando</span>' : ''}</div>
         <div class="t2">${reg}${dataCurta(g.dataHora)}${o ? ' · entrada de ' + fmt(o.valor) : ' · lançado aqui'}</div>
