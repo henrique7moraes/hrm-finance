@@ -2,7 +2,7 @@
 /* HRM Finance — app de controle financeiro pessoal
    Dados: Google Sheets (via Apps Script). Telas: este arquivo. */
 
-const VERSAO_APP = '2.6';
+const VERSAO_APP = '2.7';
 const NOME = 'Henrique';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
@@ -439,7 +439,7 @@ function mostrarMolde(v) {
 function aplicarTema() {
   document.documentElement.dataset.tema = S.tema === 'escuro' ? 'escuro' : 'claro';
   const m = $('meta[name="theme-color"]');
-  if (m) m.content = S.tema === 'escuro' ? '#0B1426' : '#F4F6FA';
+  if (m) m.content = S.tema === 'escuro' ? '#060B18' : '#EEF2F9';
 }
 
 const saudacao = () => { const h = new Date().getHours(); return h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite'; };
