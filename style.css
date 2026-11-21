@@ -156,6 +156,10 @@ h2 { font-size: 15px; margin: 22px 2px 10px; font-weight: 800; color: var(--text
 .heroi { background: var(--destaque); color: #FFFFFF; border-radius: 24px; padding: 20px 20px 18px; }
 .heroi .rotulo { font-size: 13px; font-weight: 600; opacity: .9; }
 .heroi .valor-grande { font-size: 32px; font-weight: 800; letter-spacing: -.8px; margin: 2px 0 4px; line-height: 1.15; }
+.heroi .especie { display: inline-flex; align-items: center; gap: 7px; margin: 0 0 6px; padding: 5px 11px 5px 9px; border-radius: 999px;
+  background: rgba(255, 255, 255, .12); border: 1px solid rgba(232, 181, 74, .45); color: #FFFFFF; font: inherit; font-size: 13px; cursor: pointer; }
+.heroi .especie svg { width: 16px; height: 16px; fill: none; stroke: #E8B54A; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.heroi .especie b { font-weight: 700; }
 .heroi .rodape { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; margin-top: 8px; }
 .heroi .mes-saldo { font-size: 12px; }
 .heroi .mes-saldo span { display: block; opacity: .85; }
