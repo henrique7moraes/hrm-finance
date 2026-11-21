@@ -2,7 +2,7 @@
 /* HRM Finance — app de controle financeiro pessoal
    Dados: Google Sheets (via Apps Script). Telas: este arquivo. */
 
-const VERSAO_APP = '2.7';
+const VERSAO_APP = '2.8';
 const NOME = 'Henrique';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
@@ -502,7 +502,7 @@ function fecharFolha(viaVoltar) {
   $('#folhaFundo').hidden = true;
   f.innerHTML = '';
   document.body.style.overflow = '';
-  if (!viaVoltar && history.state && history.state.folha) history.back();
+  if (!viaVoltar && history.state && history.state.folha) { voltaProgramada = true; history.back(); }
 }
 const folhaAberta = () => !$('#folha').hidden;
 
@@ -523,6 +523,7 @@ const icone = {
   compromisso: '<svg viewBox="0 0 24 24"><path d="M21 7.5V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3.5"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h5"/><path d="M17.5 17.5 16 16.3V14"/><circle cx="16" cy="16" r="6"/></svg>',
   porco: '<svg viewBox="0 0 24 24"><path d="M19 5c-1.5 0-2.8 1.4-3 2-3.5-1.5-11-.3-11 5 0 1.8 0 3 2 4.5V20h4v-2h3v2h4v-4c1-.5 1.7-1 2-2h2v-4h-2c0-1-.5-1.5-1-2V5z"/><path d="M2 9v1c0 1.1.9 2 2 2h1"/><path d="M16 11h.01"/></svg>',
   igreja: '<svg viewBox="0 0 24 24"><path d="M10 9h4"/><path d="M12 7v5"/><path d="M14 22v-4a2 2 0 0 0-4 0v4"/><path d="M18 22V5.6a1 1 0 0 0-.55-.9l-4.56-2.27a2 2 0 0 0-1.78 0L6.55 4.7a1 1 0 0 0-.55.9V22"/><path d="m18 9 3.45 1.72a1 1 0 0 1 .55.9V20a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-8.38a1 1 0 0 1 .55-.9L6 9"/></svg>',
+  dinheiro: '<svg viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/></svg>',
   receber: '<svg viewBox="0 0 24 24"><path d="M11 15h2a2 2 0 1 0 0-4h-3c-.6 0-1.1.2-1.4.6L3 17"/><path d="m7 21 1.6-1.4c.3-.4.8-.6 1.4-.6h4c1.1 0 2.1-.4 2.8-1.2l4.6-4.4a2 2 0 0 0-2.75-2.91l-4.2 3.9"/><path d="m2 16 6 6"/><circle cx="16" cy="9" r="2.9"/><circle cx="6" cy="5" r="3"/></svg>'
 };
 
@@ -545,6 +546,33 @@ function render() {
   if (main.dataset.anim !== tela) { main.dataset.anim = tela; main.classList.remove('anima'); void main.offsetWidth; main.classList.add('anima'); }
   $$('#nav [data-view]').forEach(b => b.classList.toggle('ativo', b.dataset.view === S.view));
   atualizarSync();
+  garantirVolta();
+}
+
+/* Botão voltar do celular: fecha a janela aberta, depois volta para a tela anterior,
+   depois para o Início, e só no Início sai do app. Fora do Início fica sempre uma
+   entrada extra no histórico do navegador, para o voltar cair dentro do app. */
+let voltaProgramada = false;
+function telaDeVolta() {
+  if (S.view === 'lancar' && S.form && S.form.id) return 'fluxo';
+  if (!ABAS.includes(S.view) && S.origem && S.origem !== S.view) return S.origem;
+  return 'painel';
+}
+function garantirVolta() {
+  if (voltaProgramada) return;
+  const st = history.state || {};
+  if (st.folha) return;
+  if (S.view !== 'painel' && !st.tela) history.pushState({ tela: true }, '');
+  else if (S.view === 'painel' && st.tela && !folhaAberta()) { voltaProgramada = true; history.back(); }
+}
+function aoVoltar() {
+  if (voltaProgramada) { voltaProgramada = false; garantirVolta(); return; }
+  if (folhaAberta()) return fecharFolha(true);
+  if (!S.dados || !S.url || !S.pin || S.view === 'painel') return;
+  S.view = telaDeVolta();
+  S.form = null;
+  render();
+  window.scrollTo(0, 0);
 }
 
 /* Atualiza a tela só se o usuário não estiver digitando ou com uma janela aberta */
@@ -742,6 +770,7 @@ function painel() {
   <section class="heroi">
     <div class="rotulo">Na carteira</div>
     <div class="valor-grande num">${fmt(c.carteira)}</div>
+    ${(e => `<button class="especie" data-acao="editarEspecie">${icone.dinheiro}${e ? `<span><b class="num">${fmt(e)}</b> em espécie</span>` : '<span>Informar quanto está em espécie</span>'}</button>`)(num(d.config.especie))}
     <div class="heroi-linha">
       <div><span>Entrou</span><b class="num">${fmt(c.entMes)}</b></div>
       <div><span>Saiu</span><b class="num">${fmt(c.saiMes)}</b></div>
@@ -2227,6 +2256,16 @@ function folhaCategoria(tipo) {
     <button class="btn secundario" data-acao="fecharFolha">Cancelar</button>`, () => $('#inNomeCat').focus());
 }
 
+function folhaEspecie() {
+  const v = num(S.dados.config.especie);
+  abrirFolha(`
+    <h3>Em espécie</h3>
+    <p class="muted pequeno">Quanto do valor que está na carteira você tem em dinheiro vivo. Não muda o total, só mostra a divisão.</p>
+    <div class="valor-entrada"><input id="inEspecie" data-dinheiro inputmode="numeric" placeholder="R$ 0,00" autocomplete="off"
+      data-centavos="${Math.round(v * 100)}" value="${v ? fmt(v) : ''}"></div>
+    <button class="btn" data-acao="salvarEspecie">Salvar</button>
+    <button class="btn secundario" data-acao="fecharFolha">Cancelar</button>`, () => $('#inEspecie').focus());
+}
 function folhaSaldoInicial() {
   const v = num(S.dados.config.saldoInicial);
   abrirFolha(`
@@ -2633,6 +2672,11 @@ const ACOES = {
 
   /* mais opções */
   editarSaldoInicial() { folhaSaldoInicial(); },
+  editarEspecie() { folhaEspecie(); },
+  async salvarEspecie() {
+    const v = centavosDe($('#inEspecie')) / 100;
+    if (await executar('setConfig', { chave: 'especie', valor: v }, v ? `${fmt(v)} em espécie` : 'Valor em espécie zerado')) { fecharFolha(); render(); }
+  },
   async salvarSaldoInicial() {
     const v = centavosDe($('#inIniAj')) / 100;
     if (await executar('setConfig', { chave: 'saldoInicial', valor: v }, 'Saldo inicial atualizado')) { fecharFolha(); render(); }
@@ -2669,7 +2713,7 @@ document.addEventListener('click', e => {
 });
 
 $('#folhaFundo').addEventListener('click', () => fecharFolha());
-window.addEventListener('popstate', () => { if (folhaAberta()) fecharFolha(true); });
+window.addEventListener('popstate', aoVoltar);
 
 document.addEventListener('input', e => {
   const t = e.target;
@@ -2738,4 +2782,6 @@ setInterval(() => { if (document.visibilityState === 'visible' && navigator.onLi
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
     navigator.serviceWorker.register('sw.js').catch(() => { });
   }
+  // Pede ao navegador para não apagar sozinho os dados do app (link, PIN e fila)
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persisted().then(p => p || navigator.storage.persist()).catch(() => { });
 })();
